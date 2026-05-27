@@ -13,7 +13,8 @@ from flask import Flask, jsonify, request, Response, redirect, url_for, session
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
-app.secret_key = "terrarium-secret-change-me"
+# generate a new Key: python3 -c "import secrets; print(secrets.token_hex(32))"
+app.secret_key = "a48af364f1b148da855cb51057ecfa179bc7c572b439dee84bf0f49fa6fcfe60"
 
 CONFIG_PATH = Path(__file__).parent / "config.ini"
 
