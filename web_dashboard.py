@@ -1256,80 +1256,10 @@ def _rgb_csv_to_hex(s: str, fallback: str) -> str:
 @app.route("/api/gecko/status")
 @_auth_required
 def api_gecko_status():
-    """Combined mood score from temp, humidity, and check-in recency."""
-    if not _config or not _config.getboolean("gecko", "enabled", fallback=True):
-        return jsonify({"enabled": False})
-
-    g = lambda k, fb: _config.getfloat("gecko", k, fallback=fb)
-    t_min_h,  t_max_h  = g("temp_min_happy", 75.0), g("temp_max_happy", 88.0)
-    t_min_c,  t_max_c  = g("temp_min_critical", 65.0), g("temp_max_critical", 95.0)
-    h_min_h,  h_max_h  = g("humidity_min_happy", 40.0), g("humidity_max_happy", 70.0)
-    h_min_c,  h_max_c  = g("humidity_min_critical", 25.0), g("humidity_max_critical", 90.0)
-    warn_hours = g("checkin_warn_hours", 36.0)
-    crit_hours = g("checkin_critical_hours", 72.0)
-    sensors_filter = {s.strip() for s in _config.get("gecko", "sensors", fallback="").split(",") if s.strip()}
-
-    temp_unit = _config.get("display", "temp_unit", fallback="F").upper()
-    unit_label = "°F" if temp_unit == "F" else "°C"
-
-    def score_band(val, min_h, max_h, min_c, max_c):
-        if val < min_c or val > max_c: return 0  # upset
-        if val < min_h or val > max_h: return 1  # neutral
-        return 2                                 # happy
-
-    factors = []  # list of (score, label)
-    latest = _data_logger.get_latest_readings() if _data_logger else []
-    for row in latest:
-        if sensors_filter and row["sensor_name"] not in sensors_filter:
-            continue
-        tc = row["temp_c"]
-        td = tc * 9/5 + 32 if temp_unit == "F" else tc
-        ts = score_band(td, t_min_h, t_max_h, t_min_c, t_max_c)
-        factors.append((ts, f"{row['sensor_name']} temp {td:.1f}{unit_label}"))
-        hv = row["humidity"]
-        hs = score_band(hv, h_min_h, h_max_h, h_min_c, h_max_c)
-        factors.append((hs, f"{row['sensor_name']} humidity {hv:.1f}%"))
-
-    # Check-in factor (care or feeding)
-    last = None
-    if _data_logger:
-        for cat in ("care", "feeding"):
-            e = _data_logger.get_last_event_by_category(cat)
-            if e and (last is None or e["ts"] > last["ts"]):
-                last = e
-    if last is None:
-        cs = 0
-        check_label = "no check-in logged yet"
-    else:
-        hours_since = (datetime.utcnow() - datetime.fromisoformat(last["ts"])).total_seconds() / 3600
-        if   hours_since >= crit_hours: cs = 0
-        elif hours_since >= warn_hours: cs = 1
-        else:                           cs = 2
-        if hours_since < 1:    ago = f"{int(hours_since * 60)}m"
-        elif hours_since < 48: ago = f"{int(hours_since)}h"
-        else:                  ago = f"{int(hours_since // 24)}d"
-        check_label = f"last check-in {ago} ago"
-    factors.append((cs, check_label))
-
-    if not factors:
-        return jsonify({"enabled": True, "mood": "unknown",
-                        "summary": "Waiting for sensor data...", "reasons": []})
-
-    worst = min(f[0] for f in factors)
-    mood = "happy" if worst == 2 else "neutral" if worst == 1 else "upset"
-    if mood == "happy":
-        summary = "Cozy and content"
-    elif mood == "neutral":
-        nudges = [lbl for sc, lbl in factors if sc == 1]
-        summary = "A bit off — " + ", ".join(nudges[:2])
-    else:
-        bads = [lbl for sc, lbl in factors if sc == 0]
-        summary = "Needs attention: " + ", ".join(bads[:2])
-
-    return jsonify({
-        "enabled": True, "mood": mood, "summary": summary,
-        "reasons": [{"score": s, "label": l} for s, l in factors],
-    })
+    """Combined mood score from temp, humidity, and check-in recency.
+    Logic lives in gecko_mood.compute_mood() so the OLED uses the same scoring."""
+    from gecko_mood import compute_mood
+    return jsonify(compute_mood(_config, _data_logger))
 
 
 @app.route("/api/sensors/averages")

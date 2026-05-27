@@ -214,8 +214,6 @@ class DisplayManager:
         self.temp_high      = c.getfloat("temp_high",            fallback=85.0)
         self.hum_low        = c.getfloat("humidity_display_low",  fallback=50.0)
         self.hum_high       = c.getfloat("humidity_display_high", fallback=80.0)
-        self.care_reminder_hours = self.config.getfloat(
-            "care", "care_reminder_hours", fallback=24.0)
 
         self.col_bg        = _parse_color(c.get("color_background", ""), BG)
         self.col_accent    = _parse_color(c.get("color_accent",     ""), ACCENT)
@@ -285,9 +283,9 @@ class DisplayManager:
 
             pages.append(self._draw_status_page())
 
-            care_page = self._maybe_draw_care_reminder()
-            if care_page is not None:
-                pages.append(care_page)
+            mood_page = self._maybe_draw_gecko_mood()
+            if mood_page is not None:
+                pages.append(mood_page)
 
             self._disp.display(pages[self._page % len(pages)])
             self._page += 1
@@ -467,76 +465,125 @@ class DisplayManager:
                     break
         return img
 
-    def _maybe_draw_care_reminder(self):
-        """Return a blue 'CARE' reminder page if no care OR feeding event has
-        been logged within care_reminder_hours, otherwise None."""
-        if self.care_reminder_hours <= 0 or not self.data_logger:
+    def _maybe_draw_gecko_mood(self):
+        """Show a gecko mood page when the gecko isn't happy (neutral or upset).
+        Returns None if disabled or when everything is fine."""
+        if not self.data_logger:
             return None
         try:
-            events = [
-                self.data_logger.get_last_event_by_category("care"),
-                self.data_logger.get_last_event_by_category("feeding"),
-            ]
-        except Exception:
+            from gecko_mood import compute_mood
+            mood = compute_mood(self.config, self.data_logger)
+        except Exception as e:
+            logger.debug("gecko_mood failed: %s", e)
             return None
-        events = [e for e in events if e]
-        from datetime import datetime
-        now = datetime.utcnow()
-        last = None
-        for e in events:
-            try:
-                ts = datetime.fromisoformat(e["ts"])
-            except Exception:
-                continue
-            if last is None or ts > last:
-                last = ts
-        if last is None:
-            sub = "No check-in logged yet"
-        else:
-            hours_since = (now - last).total_seconds() / 3600
-            if hours_since < self.care_reminder_hours:
-                return None
-            sub = f"Last check-in: {self._fmt_duration(hours_since)} ago"
-        return self._draw_care_reminder_page(sub)
+        # Only interrupt the rotation when the gecko is actually upset — yellow
+        # alone is noisy for borderline conditions and the data is already on
+        # the main pages.
+        if not mood.get("enabled") or mood.get("mood") != "upset":
+            return None
+        return self._draw_gecko_mood_page(mood)
 
-    @staticmethod
-    def _fmt_duration(hours: float) -> str:
-        if hours < 1:
-            return f"{int(hours * 60)}m"
-        if hours < 48:
-            return f"{int(hours)}h"
-        return f"{int(hours // 24)}d"
+    def _draw_gecko_mood_page(self, mood: dict) -> "Image.Image":
+        palette = {
+            "happy":   {"body": (0,  200, 120), "bg": (8,  28,  18)},
+            "neutral": {"body": (255, 200, 0),  "bg": (32, 28,  10)},
+            "upset":   {"body": (220, 60,  20), "bg": (40, 14,  10)},
+        }
+        p = palette.get(mood.get("mood", "upset"), palette["upset"])
+        body, bg = p["body"], p["bg"]
 
-    def _draw_care_reminder_page(self, subtitle: str) -> "Image.Image":
         img, d = self._new_canvas()
-        # Solid blue background — uses the configured "low humidity" blue
-        d.rectangle([(0, 0), (W, H)], fill=self.col_hum_low)
-        # "CARE" giant text, centered
-        text = "CARE"
+        d.rectangle([(0, 0), (W, H)], fill=bg)
+
+        # Title bar
+        d.text((10, 10), "GECKO MOOD", font=self._fnt_small, fill=WHITE)
+        label = mood["mood"].upper()
         try:
-            bbox = d.textbbox((0, 0), text, font=self._fnt_large)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            bbox = d.textbbox((0, 0), label, font=self._fnt_small)
+            lw = bbox[2] - bbox[0]
         except Exception:
-            tw, th = 140, 50
-        d.text(((W - tw) // 2, (H // 2) - th), text,
-               font=self._fnt_large, fill=WHITE)
-        # Subtitle (e.g. "Last care: 2d ago")
+            lw = len(label) * 10
+        d.rectangle([(W - lw - 22, 6), (W - 10, 30)], fill=body)
+        d.text((W - lw - 16, 10), label, font=self._fnt_small, fill=(0, 0, 0))
+
+        # Gecko, drawn centered. The drawing fits inside ~200x110.
+        self._draw_gecko(d, x=20, y=70, body=body, mood=mood["mood"])
+
+        # Mood headline
+        headline = {"happy": "I'm doing great!",
+                    "neutral": "I'm a bit off",
+                    "upset": "I need attention!"}.get(mood["mood"], "")
         try:
-            bbox = d.textbbox((0, 0), subtitle, font=self._fnt_small)
-            sw = bbox[2] - bbox[0]
+            bbox = d.textbbox((0, 0), headline, font=self._fnt_med)
+            hw = bbox[2] - bbox[0]
         except Exception:
-            sw = len(subtitle) * 8
-        d.text(((W - sw) // 2, (H // 2) + 10), subtitle,
-               font=self._fnt_small, fill=WHITE)
-        prompt = "Please check on your pet"
-        try:
-            bbox = d.textbbox((0, 0), prompt, font=self._fnt_tiny)
-            pw = bbox[2] - bbox[0]
-        except Exception:
-            pw = len(prompt) * 6
-        d.text(((W - pw) // 2, (H // 2) + 40), prompt,
-               font=self._fnt_tiny, fill=WHITE)
+            hw = len(headline) * 14
+        d.text(((W - hw) // 2, 200), headline, font=self._fnt_med, fill=body)
+
+        # Reasons — show only the ones bringing the mood down
+        worst = min((r["score"] for r in mood.get("reasons", [])), default=2)
+        offenders = [r["label"] for r in mood.get("reasons", []) if r["score"] == worst]
+        y = 240
+        for line in offenders[:3]:
+            line = line[:32]  # avoid overflow
+            try:
+                bbox = d.textbbox((0, 0), line, font=self._fnt_tiny)
+                tw = bbox[2] - bbox[0]
+            except Exception:
+                tw = len(line) * 7
+            d.text(((W - tw) // 2, y), line, font=self._fnt_tiny, fill=WHITE)
+            y += 18
+
         return img
+
+    def _draw_gecko(self, d, x: int, y: int, body: tuple, mood: str):
+        """Draw a stylized gecko at (x,y) inside a ~200x110 box, in `body` color."""
+        def ox(v): return x + v
+        def oy(v): return y + v
+
+        # Tail (polygon — approximates the curl)
+        d.polygon([
+            (ox(60),  oy(70)), (ox(40), oy(72)), (ox(24), oy(64)),
+            (ox(16),  oy(40)), (ox(24), oy(22)), (ox(40), oy(30)),
+            (ox(36),  oy(50)), (ox(54), oy(64)),
+        ], fill=body)
+
+        # Body
+        d.ellipse([ox(45), oy(50), ox(155), oy(86)], fill=body)
+        # Back leg + toes
+        d.ellipse([ox(61), oy(73), ox(79), oy(99)], fill=body)
+        for tx in (63, 70, 77):
+            d.ellipse([ox(tx-3), oy(94), ox(tx+3), oy(102)], fill=body)
+        # Front leg + toes
+        d.ellipse([ox(126), oy(73), ox(144), oy(99)], fill=body)
+        for tx in (128, 135, 142):
+            d.ellipse([ox(tx-3), oy(94), ox(tx+3), oy(102)], fill=body)
+        # Head
+        d.ellipse([ox(132), oy(30), ox(188), oy(70)], fill=body)
+
+        # Spots on the body — slightly darker than body color
+        spot = tuple(max(0, c - 60) for c in body)
+        d.ellipse([ox(82), oy(59), ox(88), oy(65)], fill=spot)
+        d.ellipse([ox(102), oy(55), ox(108), oy(61)], fill=spot)
+        d.ellipse([ox(122), oy(61), ox(128), oy(67)], fill=spot)
+
+        # Eye
+        d.ellipse([ox(166), oy(42), ox(178), oy(54)], fill=WHITE)
+        d.ellipse([ox(170), oy(46), ox(176), oy(52)], fill=(0, 0, 0))
+
+        # Mouth varies with mood
+        # Bounds for the arc: a small box around (160-178, ~58)
+        if mood == "happy":
+            # Smile (∪) — bottom half of a small circle
+            d.arc([ox(156), oy(54), ox(180), oy(68)], start=0, end=180,
+                  fill=(0, 0, 0), width=2)
+        elif mood == "neutral":
+            d.line([(ox(158), oy(60)), (ox(178), oy(60))],
+                   fill=(0, 0, 0), width=2)
+        else:  # upset
+            # Frown (∩) — top half of a small circle, sitting low
+            d.arc([ox(156), oy(60), ox(180), oy(74)], start=180, end=360,
+                  fill=(0, 0, 0), width=2)
 
     def _draw_relay_strip(self, d, y):
         items = []
