@@ -233,15 +233,16 @@ CONFIG_HTML = """<!DOCTYPE html>
 <div class="nav">
   <a href="/">← Dashboard</a>
   <a href="/config-logout">Logout</a>
-  <button id="shutdown-btn" style="background:#ff3030;color:#fff;padding:.3rem .9rem;border-radius:8px;border:0;font-weight:600;cursor:pointer;font-size:.85rem;margin-left:.5rem" onclick="stopPython()">&#9209; Stop Python</button>
+  <button id="restart-btn" style="background:#ff8800;color:#000;padding:.3rem .9rem;border-radius:8px;border:0;font-weight:600;cursor:pointer;font-size:.85rem;margin-left:.5rem" onclick="restartPython()">&#8635; Restart</button>
 </div>
 <script>
-async function stopPython(){
-  if(!confirm("Stop the Python process and return to terminal?")) return;
-  const btn=document.getElementById("shutdown-btn");
-  btn.textContent="Stopping..."; btn.disabled=true;
+async function restartPython(){
+  if(!confirm("Restart the Python process? Controls will be offline briefly while systemd restarts the service.")) return;
+  const btn=document.getElementById("restart-btn");
+  btn.textContent="Restarting..."; btn.disabled=true;
   try{ await fetch("/api/shutdown",{method:"POST"}); }catch(e){}
-  btn.textContent="Stopped";
+  // systemd brings the service back after RestartSec; reload the page once it's likely up
+  setTimeout(()=>{ window.location.reload(); }, 12000);
 }
 </script>
 
@@ -378,6 +379,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div class="topbar">
   <h1>🦎 {{ site_title }}</h1>
   <div class="topbar-btns">
+    <a href="/logs"><button class="cfg-btn" style="background:#444">📋 Logs</button></a>
     <a href="/config"><button class="cfg-btn">⚙️ Config</button></a>
     {% if auth_enabled %}<a href="/logout"><button class="off-btn">Logout</button></a>{% endif %}
   </div>
@@ -1278,6 +1280,198 @@ def api_system_stats():
     except Exception:
         pass
     return jsonify(stats)
+
+
+LOGS_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Event Log – {{ site_title }}</title>
+<style>
+  :root{--bg:#0a0a14;--card:#14142a;--accent:#00c878;--text:#e0e0f0;--grey:#7878a0;--warn:#ff5028}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;padding:1rem}
+  h1{color:var(--accent);margin-bottom:.25rem;font-size:1.3rem}
+  .nav{margin-bottom:1rem}
+  .nav a{color:var(--accent);text-decoration:none;margin-right:1rem;font-size:.9rem}
+  .toolbar{background:var(--card);border-radius:12px;padding:.8rem 1rem;margin-bottom:1rem}
+  .row{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin-bottom:.6rem}
+  .row:last-child{margin-bottom:0}
+  .label{color:var(--grey);font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;
+         margin-right:.3rem;min-width:55px}
+  .pill{background:#1a1a2a;color:var(--grey);border:1px solid #22224a;border-radius:99px;
+        padding:.25rem .8rem;font-size:.8rem;cursor:pointer;font-family:inherit}
+  .pill:hover{border-color:var(--accent);color:var(--text)}
+  .pill.active{background:var(--accent);color:#000;border-color:var(--accent);font-weight:600}
+  input[type=text]{flex:1;min-width:140px;padding:.35rem .7rem;background:#0a0a20;
+                   border:1px solid #22224a;border-radius:8px;color:var(--text);font-size:.85rem}
+  input[type=text]:focus{outline:none;border-color:var(--accent)}
+  #count{color:var(--grey);font-size:.8rem;margin-left:auto}
+  table{width:100%;border-collapse:collapse;font-size:.85rem;background:var(--card);
+        border-radius:12px;overflow:hidden}
+  th{text-align:left;color:var(--grey);padding:.6rem .8rem;
+     border-bottom:1px solid #22224a;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}
+  td{padding:.45rem .8rem;border-bottom:1px solid #16163a;vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.ts{white-space:nowrap;color:var(--grey);font-variant-numeric:tabular-nums}
+  td.msg{word-break:break-word}
+  .badge{display:inline-block;padding:.15rem .55rem;border-radius:99px;font-size:.7rem;
+         font-weight:600;color:#000}
+  .empty{text-align:center;color:var(--grey);padding:2rem;font-size:.9rem}
+</style>
+</head>
+<body>
+<h1>📋 Event Log</h1>
+<div class="nav">
+  <a href="/">← Dashboard</a>
+</div>
+
+<div class="toolbar">
+  <div class="row">
+    <span class="label">Range</span>
+    <button class="pill" data-hours="1">1h</button>
+    <button class="pill" data-hours="6">6h</button>
+    <button class="pill active" data-hours="24">24h</button>
+    <button class="pill" data-hours="168">7d</button>
+    <button class="pill" data-hours="720">30d</button>
+    <input type="text" id="search" placeholder="Search messages...">
+    <span id="count"></span>
+  </div>
+  <div class="row">
+    <span class="label">Filter</span>
+    <button class="pill active" data-cat="">All</button>
+    <button class="pill" data-cat="startup">startup</button>
+    <button class="pill" data-cat="shutdown">shutdown</button>
+    <button class="pill" data-cat="config">config</button>
+    <button class="pill" data-cat="relay">relay</button>
+    <button class="pill" data-cat="light">light</button>
+    <button class="pill" data-cat="camera">camera</button>
+    <button class="pill" data-cat="feeding">feeding</button>
+    <button class="pill" data-cat="care">care</button>
+    <button class="pill" data-cat="error">error</button>
+  </div>
+</div>
+
+<div id="results"></div>
+
+<script>
+const catColors = {
+  startup:'#00c878', shutdown:'#ff5028', config:'#50a0ff',
+  relay:'#ffcc00',   light:'#ffaa00',    camera:'#aa88ff',
+  feeding:'#ff88cc', care:'#50a0ff',     error:'#ff3030'
+};
+let selectedCats = new Set();  // empty = all
+let hours = 24;
+let searchTerm = '';
+
+async function loadLogs(){
+  const params = new URLSearchParams({hours: hours});
+  if(selectedCats.size) params.set('categories', [...selectedCats].join(','));
+  if(searchTerm) params.set('q', searchTerm);
+  const r = await fetch('/api/logs?' + params);
+  const d = await r.json();
+  document.getElementById('count').textContent = d.count + ' event' + (d.count===1?'':'s');
+  const container = document.getElementById('results');
+  if(!d.events.length){
+    container.innerHTML = '<div class="empty">No events match the current filter.</div>';
+    return;
+  }
+  container.innerHTML = `
+    <table>
+      <thead><tr><th style="width:140px">Time</th><th style="width:90px">Category</th><th>Message</th></tr></thead>
+      <tbody>
+        ${d.events.map(e=>`
+          <tr>
+            <td class="ts">${e.ts_local}</td>
+            <td><span class="badge" style="background:${catColors[e.category]||'#444'};color:#000">${e.category}</span></td>
+            <td class="msg">${escapeHtml(e.message)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Range pills (single-select)
+document.querySelectorAll('.pill[data-hours]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.pill[data-hours]').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    hours = parseInt(btn.dataset.hours);
+    loadLogs();
+  });
+});
+
+// Category pills (multi-select; "All" clears the set)
+document.querySelectorAll('.pill[data-cat]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const cat = btn.dataset.cat;
+    if(cat === ''){
+      selectedCats.clear();
+      document.querySelectorAll('.pill[data-cat]').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+    } else {
+      document.querySelector('.pill[data-cat=""]').classList.remove('active');
+      if(selectedCats.has(cat)){
+        selectedCats.delete(cat);
+        btn.classList.remove('active');
+      } else {
+        selectedCats.add(cat);
+        btn.classList.add('active');
+      }
+      if(selectedCats.size === 0){
+        document.querySelector('.pill[data-cat=""]').classList.add('active');
+      }
+    }
+    loadLogs();
+  });
+});
+
+// Search input (debounced)
+let searchTimer = null;
+document.getElementById('search').addEventListener('input', (ev)=>{
+  searchTerm = ev.target.value.trim();
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(loadLogs, 200);
+});
+
+loadLogs();
+setInterval(loadLogs, 30000);
+</script>
+</body>
+</html>"""
+
+
+@app.route("/logs")
+@_auth_required
+def logs_page():
+    from flask import render_template_string
+    title = _config.get("web", "site_title", fallback="Terrarium Monitor") if _config else "Terrarium Monitor"
+    return render_template_string(LOGS_HTML, site_title=title)
+
+
+@app.route("/api/logs")
+@_auth_required
+def api_logs():
+    """Return filtered events. Query: hours, categories=a,b,c, q (text search)."""
+    hours = request.args.get("hours", 24, type=int)
+    cats_param = request.args.get("categories", "")
+    q = request.args.get("q", "").strip().lower()
+    events = _data_logger.get_all_events(hours=hours) if _data_logger else []
+    cat_set = {c.strip() for c in cats_param.split(",") if c.strip()} if cats_param else None
+    if cat_set:
+        events = [e for e in events if e.get("category") in cat_set]
+    if q:
+        events = [e for e in events
+                  if q in (e.get("message") or "").lower()
+                  or q in (e.get("category") or "").lower()]
+    for e in events:
+        e["ts_local"] = _utc_to_local(e["ts"])
+    return jsonify({"events": events, "count": len(events)})
 
 
 TIMELAPSE_HTML = """<!DOCTYPE html>
