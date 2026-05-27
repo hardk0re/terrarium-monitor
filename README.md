@@ -54,6 +54,9 @@ So I built it myself. It runs entirely on the local network — no cloud, no sub
 ---
 
 ## Wiring
+Usefull RPI3 Pin-Out:
+<img width="1006" height="600" alt="image" src="https://github.com/user-attachments/assets/08e5c826-93c3-4873-9830-3ca978be71a0" />
+
 
 ### SHT31-D Sensors (I²C)
 ```
