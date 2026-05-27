@@ -273,10 +273,11 @@ i2c_bus = 3
 *Built with way too much enthusiasm for a gecko that probably doesn't care.*
 
 Main Website:
-<img width="1710" height="1033" alt="image" src="https://github.com/user-attachments/assets/15faf594-34bd-4a8b-872f-180a114f3a69" />
-<img width="1718" height="1011" alt="image" src="https://github.com/user-attachments/assets/196438f7-1d95-4278-9940-c537002044be" />
+<img width="1710" height="1033" alt="image" src="https://github.com/user-attachments/assets/75754349-e3a4-46cf-8017-6596d00aed6b" />
+<img width="1718" height="1011" alt="image" src="https://github.com/user-attachments/assets/f19e0eb4-948e-4d94-8426-b7af8bebaa7f" />
 
 Configuration Editor:
-<img width="1617" height="1035" alt="image" src="https://github.com/user-attachments/assets/f75c3242-9f66-4004-9837-fe4ceec70746" />
+<img width="1617" height="1035" alt="image" src="https://github.com/user-attachments/assets/aa1e9c56-a878-49ea-a921-ab83961066b2" />
+
 
 
