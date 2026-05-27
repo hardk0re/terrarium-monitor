@@ -398,6 +398,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
            font-weight:700;cursor:pointer">Log Care →</button>
 </div>
 
+<div id="gecko-wrap" class="grid" style="display:none;margin-bottom:1rem"></div>
+
 <div id="sensors" class="grid"></div>
 
 <div id="averages-wrap" style="display:none">
@@ -509,6 +511,84 @@ async function loadWeather(){
     loadTimelapseCard(false);
     loadSystemStats();
   } catch(e){ console.error('loadWeather error:', e); }
+}
+
+function geckoSvg(mood){
+  // Cute side-view gecko. `currentColor` paints the body so we can recolor
+  // by setting `color:` on the parent. Eye + mouth vary by mood.
+  let mouth, eyeY = 30;
+  if(mood === 'happy'){
+    mouth = '<path d="M 160 42 Q 168 48, 176 42" stroke="#000" stroke-width="2" fill="none" stroke-linecap="round"/>';
+  } else if(mood === 'neutral'){
+    mouth = '<line x1="160" y1="44" x2="176" y2="44" stroke="#000" stroke-width="2" stroke-linecap="round"/>';
+  } else {
+    mouth = '<path d="M 160 46 Q 168 40, 176 46" stroke="#000" stroke-width="2" fill="none" stroke-linecap="round"/>';
+    eyeY = 32;
+  }
+  return `
+    <svg viewBox="0 0 200 110" style="width:100%;max-width:170px;display:block;margin:.3rem auto">
+      <!-- Tail -->
+      <path d="M 40 70 Q 8 60, 14 30 Q 18 18, 30 28 Q 26 50, 50 64 Z" fill="currentColor"/>
+      <!-- Body -->
+      <ellipse cx="100" cy="68" rx="55" ry="18" fill="currentColor"/>
+      <!-- Back leg -->
+      <ellipse cx="70" cy="86" rx="9" ry="13" fill="currentColor"/>
+      <!-- Front leg -->
+      <ellipse cx="135" cy="86" rx="9" ry="13" fill="currentColor"/>
+      <!-- Toes -->
+      <circle cx="63" cy="96" r="3" fill="currentColor"/>
+      <circle cx="70" cy="98" r="3" fill="currentColor"/>
+      <circle cx="77" cy="96" r="3" fill="currentColor"/>
+      <circle cx="128" cy="96" r="3" fill="currentColor"/>
+      <circle cx="135" cy="98" r="3" fill="currentColor"/>
+      <circle cx="142" cy="96" r="3" fill="currentColor"/>
+      <!-- Head -->
+      <ellipse cx="160" cy="50" rx="28" ry="20" fill="currentColor"/>
+      <!-- Spots -->
+      <circle cx="85" cy="62" r="3" fill="rgba(0,0,0,.18)"/>
+      <circle cx="105" cy="58" r="3" fill="rgba(0,0,0,.18)"/>
+      <circle cx="125" cy="64" r="3" fill="rgba(0,0,0,.18)"/>
+      <!-- Eye -->
+      <circle cx="170" cy="${eyeY+12}" r="5" fill="#fff"/>
+      <circle cx="171" cy="${eyeY+12}" r="2.6" fill="#000"/>
+      <!-- Mouth -->
+      ${mouth}
+    </svg>`;
+}
+
+async function loadGecko(){
+  try {
+    const r = await fetch('/api/gecko/status');
+    const d = await r.json();
+    const wrap = document.getElementById('gecko-wrap');
+    if(!d.enabled){
+      wrap.style.display = 'none';
+      wrap.innerHTML = '';
+      return;
+    }
+    wrap.style.display = 'grid';
+    const palette = {
+      happy:   {color:'#00c878', label:'Happy',   bg:'#0a2818'},
+      neutral: {color:'#ffcc00', label:'Meh',     bg:'#28220a'},
+      upset:   {color:'#ff5028', label:'Upset',   bg:'#2a0e0a'},
+      unknown: {color:'#7878a0', label:'No data', bg:'#14142a'},
+    };
+    const p = palette[d.mood] || palette.unknown;
+    const reasons = (d.reasons || []).map(r=>{
+      const dot = r.score === 2 ? '🟢' : r.score === 1 ? '🟡' : '🔴';
+      return `<div style="font-size:.78rem;color:var(--grey);margin-top:.15rem">${dot} ${r.label}</div>`;
+    }).join('');
+    wrap.innerHTML = `
+      <div class="card" style="background:${p.bg};border:1px solid ${p.color}33">
+        <h3>🦎 Gecko Mood</h3>
+        <div style="color:${p.color}">${geckoSvg(d.mood)}</div>
+        <div style="text-align:center;color:${p.color};font-weight:700;
+                    font-size:1.1rem;margin-top:.2rem">${p.label}</div>
+        <div style="text-align:center;color:var(--grey);font-size:.8rem;
+                    margin-top:.2rem">${d.summary || ''}</div>
+        ${reasons ? `<div style="margin-top:.6rem;border-top:1px solid #22224a;padding-top:.4rem">${reasons}</div>` : ''}
+      </div>`;
+  } catch(e){ console.error('loadGecko error:', e); }
 }
 
 function humidityArc(pct, thresholds){
@@ -861,6 +941,7 @@ async function loadChart(){
 
 refresh(); loadCamera(); loadChart(); loadWeather(); loadWeatherChart();
 loadFeedingItems(); loadCareItems(); loadSensorAverages(); loadCareStatus();
+loadGecko();
 setInterval(refresh, 30000);
 setInterval(loadCamera, 30000);
 setInterval(loadWeather, 600000);
@@ -868,6 +949,7 @@ setInterval(loadWeatherChart, 600000);
 setInterval(loadChart, 120000);
 setInterval(loadSensorAverages, 300000);
 setInterval(loadCareStatus, 60000);
+setInterval(loadGecko, 30000);
 setInterval(()=>{
   // Refresh just the system stats card by removing & re-adding it
   const cards = document.getElementById('weather-cards');
@@ -1169,6 +1251,85 @@ def _rgb_csv_to_hex(s: str, fallback: str) -> str:
         return f"#{r:02x}{g:02x}{b:02x}"
     except Exception:
         return fallback
+
+
+@app.route("/api/gecko/status")
+@_auth_required
+def api_gecko_status():
+    """Combined mood score from temp, humidity, and check-in recency."""
+    if not _config or not _config.getboolean("gecko", "enabled", fallback=True):
+        return jsonify({"enabled": False})
+
+    g = lambda k, fb: _config.getfloat("gecko", k, fallback=fb)
+    t_min_h,  t_max_h  = g("temp_min_happy", 75.0), g("temp_max_happy", 88.0)
+    t_min_c,  t_max_c  = g("temp_min_critical", 65.0), g("temp_max_critical", 95.0)
+    h_min_h,  h_max_h  = g("humidity_min_happy", 40.0), g("humidity_max_happy", 70.0)
+    h_min_c,  h_max_c  = g("humidity_min_critical", 25.0), g("humidity_max_critical", 90.0)
+    warn_hours = g("checkin_warn_hours", 36.0)
+    crit_hours = g("checkin_critical_hours", 72.0)
+    sensors_filter = {s.strip() for s in _config.get("gecko", "sensors", fallback="").split(",") if s.strip()}
+
+    temp_unit = _config.get("display", "temp_unit", fallback="F").upper()
+    unit_label = "°F" if temp_unit == "F" else "°C"
+
+    def score_band(val, min_h, max_h, min_c, max_c):
+        if val < min_c or val > max_c: return 0  # upset
+        if val < min_h or val > max_h: return 1  # neutral
+        return 2                                 # happy
+
+    factors = []  # list of (score, label)
+    latest = _data_logger.get_latest_readings() if _data_logger else []
+    for row in latest:
+        if sensors_filter and row["sensor_name"] not in sensors_filter:
+            continue
+        tc = row["temp_c"]
+        td = tc * 9/5 + 32 if temp_unit == "F" else tc
+        ts = score_band(td, t_min_h, t_max_h, t_min_c, t_max_c)
+        factors.append((ts, f"{row['sensor_name']} temp {td:.1f}{unit_label}"))
+        hv = row["humidity"]
+        hs = score_band(hv, h_min_h, h_max_h, h_min_c, h_max_c)
+        factors.append((hs, f"{row['sensor_name']} humidity {hv:.1f}%"))
+
+    # Check-in factor (care or feeding)
+    last = None
+    if _data_logger:
+        for cat in ("care", "feeding"):
+            e = _data_logger.get_last_event_by_category(cat)
+            if e and (last is None or e["ts"] > last["ts"]):
+                last = e
+    if last is None:
+        cs = 0
+        check_label = "no check-in logged yet"
+    else:
+        hours_since = (datetime.utcnow() - datetime.fromisoformat(last["ts"])).total_seconds() / 3600
+        if   hours_since >= crit_hours: cs = 0
+        elif hours_since >= warn_hours: cs = 1
+        else:                           cs = 2
+        if hours_since < 1:    ago = f"{int(hours_since * 60)}m"
+        elif hours_since < 48: ago = f"{int(hours_since)}h"
+        else:                  ago = f"{int(hours_since // 24)}d"
+        check_label = f"last check-in {ago} ago"
+    factors.append((cs, check_label))
+
+    if not factors:
+        return jsonify({"enabled": True, "mood": "unknown",
+                        "summary": "Waiting for sensor data...", "reasons": []})
+
+    worst = min(f[0] for f in factors)
+    mood = "happy" if worst == 2 else "neutral" if worst == 1 else "upset"
+    if mood == "happy":
+        summary = "Cozy and content"
+    elif mood == "neutral":
+        nudges = [lbl for sc, lbl in factors if sc == 1]
+        summary = "A bit off — " + ", ".join(nudges[:2])
+    else:
+        bads = [lbl for sc, lbl in factors if sc == 0]
+        summary = "Needs attention: " + ", ".join(bads[:2])
+
+    return jsonify({
+        "enabled": True, "mood": mood, "summary": summary,
+        "reasons": [{"score": s, "label": l} for s, l in factors],
+    })
 
 
 @app.route("/api/sensors/averages")
