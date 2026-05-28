@@ -221,7 +221,9 @@ def main():
         display.stop()
         camera.stop()
         weather.stop()
-        lighting.force_all_off()
+        # Stop the schedule loop but leave the Tapo plugs in whatever state
+        # they were in — we shouldn't yank UVB / basking lights when restarting.
+        lighting.stop()
         if mister: mister.force_off()
         if fan:    fan.force_off()
         cleanup_gpio()
