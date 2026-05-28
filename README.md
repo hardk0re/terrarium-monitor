@@ -266,7 +266,7 @@ i2c_bus = 3
 
 - [x] Physical buttons on the Pi for feeding/care logging without needing the web UI ([care_button.py](care_button.py))
 - [x] Push notifications via Pushover ([pushover_notifier.py](pushover_notifier.py))
-- [ ] Timelapse video assembly script
+- [x] Timelapse video review
 - [ ] Multi-enclosure support
 - [ ] Create 3D STL for Display / Enclosure / Sensor Mounts
 - [ ] Actually waiting on sensors so haven't even tested THAT code yet! :)
