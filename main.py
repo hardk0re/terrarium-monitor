@@ -107,6 +107,13 @@ def main():
     dl.set_notifier(notifier)
     last_mood = None  # tracks gecko mood transitions across polls
 
+    # ── Sensor failure tracking ───────────────────────────────────────
+    # Per-sensor last successful read time; sensors currently in "failed"
+    # state so we only notify on transitions (not every poll).
+    from datetime import datetime as _dt
+    sensor_last_good = {n: _dt.utcnow() for n, _, _ in sensors.sensors}
+    sensor_failed = set()
+
     # ── Reload / shutdown events ──────────────────────────────────────
     _stop   = threading.Event()
     _reload = threading.Event()
@@ -168,6 +175,42 @@ def main():
 
             # Sensor read + control logic
             readings = sensors.read_all()
+
+            # Sensor failure detection — compare configured-and-initialised
+            # sensors vs. who actually reported this cycle. Notify on transitions.
+            try:
+                threshold_min = cfg.getfloat("general", "sensor_failure_alert_minutes",
+                                             fallback=10.0)
+                if threshold_min > 0:
+                    now_utc = _dt.utcnow()
+                    enabled_names = {n for n, _, _ in sensors.sensors}
+                    got_names     = {r.name for r in readings}
+                    # Track any newly-added sensors (e.g. after a reload)
+                    for n in enabled_names:
+                        sensor_last_good.setdefault(n, now_utc)
+                    # Drop tracking for sensors no longer enabled
+                    for n in list(sensor_last_good):
+                        if n not in enabled_names:
+                            sensor_last_good.pop(n, None)
+                            sensor_failed.discard(n)
+                    # Compare each enabled sensor
+                    for n in enabled_names:
+                        if n in got_names:
+                            sensor_last_good[n] = now_utc
+                            if n in sensor_failed:
+                                sensor_failed.discard(n)
+                                dl.log_system_event("error",
+                                    f"Sensor '{n}' recovered.")
+                        else:
+                            minutes_silent = (now_utc - sensor_last_good[n]).total_seconds() / 60
+                            if n not in sensor_failed and minutes_silent >= threshold_min:
+                                sensor_failed.add(n)
+                                dl.log_system_event("error",
+                                    f"Sensor '{n}' unresponsive for "
+                                    f"{int(minutes_silent)} min.")
+            except Exception as e:
+                logger.warning("Sensor failure check failed: %s", e)
+
             if readings:
                 dl.log_readings(readings)
                 dl.purge_old_data()
