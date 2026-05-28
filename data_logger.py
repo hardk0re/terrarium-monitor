@@ -71,7 +71,12 @@ def init_db():
 class DataLogger:
     def __init__(self, config: configparser.ConfigParser):
         self.retention_days = config.getint("general", "log_retention_days", fallback=31)
+        self.notifier = None
         init_db()
+
+    def set_notifier(self, notifier):
+        """Attach a notifier (e.g. PushoverNotifier). Called by main after wiring."""
+        self.notifier = notifier
 
     # ------------------------------------------------------------------
     # Write helpers
@@ -110,6 +115,11 @@ class DataLogger:
                 (ts, category, message)
             )
         logger.debug("System event [%s]: %s", category, message)
+        if self.notifier:
+            try:
+                self.notifier.notify_event(category, message)
+            except Exception as e:
+                logger.warning("Notifier dispatch failed: %s", e)
 
     def log_weather(self, reading: dict):
         """Persist an outdoor weather reading."""

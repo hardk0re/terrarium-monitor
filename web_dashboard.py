@@ -36,6 +36,7 @@ _fan             = None
 _lighting        = None
 _camera          = None
 _weather         = None
+_notifier        = None
 _config          = None
 _reload_callback = None
 
@@ -46,8 +47,8 @@ def set_reload_callback(fn):
 
 
 def init(config, data_logger, sensor_manager, mister, fan, lighting,
-         camera=None, weather=None):
-    global _data_logger, _sensor_mgr, _mister, _fan, _lighting, _camera, _weather, _config
+         camera=None, weather=None, notifier=None):
+    global _data_logger, _sensor_mgr, _mister, _fan, _lighting, _camera, _weather, _notifier, _config
     _data_logger  = data_logger
     _sensor_mgr   = sensor_manager
     _mister       = mister
@@ -55,6 +56,7 @@ def init(config, data_logger, sensor_manager, mister, fan, lighting,
     _lighting     = lighting
     _camera       = camera
     _weather      = weather
+    _notifier     = notifier
     _config       = config
 
 
@@ -233,9 +235,31 @@ CONFIG_HTML = """<!DOCTYPE html>
 <div class="nav">
   <a href="/">← Dashboard</a>
   <a href="/config-logout">Logout</a>
+  <button id="pushover-test-btn" style="background:#3a87f0;color:#fff;padding:.3rem .9rem;border-radius:8px;border:0;font-weight:600;cursor:pointer;font-size:.85rem;margin-left:.5rem" onclick="testPushover()">&#128276; Test Pushover</button>
+  <span id="pushover-test-msg" style="margin-left:.6rem;font-size:.85rem;color:#7878a0"></span>
   <button id="restart-btn" style="background:#ff8800;color:#000;padding:.3rem .9rem;border-radius:8px;border:0;font-weight:600;cursor:pointer;font-size:.85rem;margin-left:.5rem" onclick="restartPython()">&#8635; Restart</button>
 </div>
 <script>
+async function testPushover(){
+  const btn = document.getElementById("pushover-test-btn");
+  const msg = document.getElementById("pushover-test-msg");
+  btn.disabled = true; const oldText = btn.textContent;
+  btn.textContent = "Sending...";
+  msg.style.color = "#7878a0";
+  msg.textContent = "";
+  try {
+    const r = await fetch("/api/pushover/test", {method: "POST"});
+    const d = await r.json();
+    msg.textContent = d.message || (d.ok ? "Sent." : "Failed.");
+    msg.style.color = d.ok ? "#00c878" : "#ff5028";
+  } catch(e){
+    msg.textContent = "Request error: " + e;
+    msg.style.color = "#ff5028";
+  } finally {
+    btn.disabled = false; btn.textContent = oldText;
+    setTimeout(()=>{ msg.textContent = ""; }, 6000);
+  }
+}
 async function restartPython(){
   if(!confirm("Restart the Python process? Controls will be offline briefly while systemd restarts the service.")) return;
   const btn=document.getElementById("restart-btn");
@@ -1759,6 +1783,15 @@ def api_timelapse_frame(filename):
     resp = send_file(str(path.resolve()), mimetype="image/jpeg")
     resp.headers["Cache-Control"] = "public, max-age=86400"
     return resp
+
+
+@app.route("/api/pushover/test", methods=["POST"])
+@_auth_required
+def api_pushover_test():
+    if not _notifier:
+        return jsonify({"ok": False, "message": "Notifier not initialised."}), 500
+    ok, msg = _notifier.test()
+    return jsonify({"ok": ok, "message": msg})
 
 
 @app.route("/api/shutdown", methods=["POST"])

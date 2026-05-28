@@ -19,6 +19,8 @@ from tapo_controller  import LightingController
 from display_manager  import DisplayManager
 from camera_manager   import CameraManager
 from weather_manager  import WeatherManager
+from pushover_notifier import PushoverNotifier
+from gecko_mood        import compute_mood
 import web_dashboard
 
 # ── logging setup ─────────────────────────────────────────────────────
@@ -100,6 +102,11 @@ def main():
     display = DisplayManager(cfg, sensors, mister, fan, lighting, weather,
                              data_logger=dl)
 
+    # ── Pushover notifications ────────────────────────────────────────
+    notifier = PushoverNotifier(cfg)
+    dl.set_notifier(notifier)
+    last_mood = None  # tracks gecko mood transitions across polls
+
     # ── Reload / shutdown events ──────────────────────────────────────
     _stop   = threading.Event()
     _reload = threading.Event()
@@ -115,7 +122,8 @@ def main():
     signal.signal(signal.SIGTERM, _shutdown)
 
     # ── Wire web dashboard ────────────────────────────────────────────
-    web_dashboard.init(cfg, dl, sensors, mister, fan, lighting, camera, weather)
+    web_dashboard.init(cfg, dl, sensors, mister, fan, lighting, camera, weather,
+                       notifier=notifier)
     web_dashboard.set_reload_callback(_do_reload)
 
     # ── Start background services ─────────────────────────────────────
@@ -149,7 +157,10 @@ def main():
                 )
                 display.update_components(sensors, mister, fan, lighting, weather,
                                           data_logger=dl)
-                web_dashboard.init(cfg, dl, sensors, mister, fan, lighting, camera, weather)
+                notifier.reload(cfg)
+                dl.set_notifier(notifier)
+                web_dashboard.init(cfg, dl, sensors, mister, fan, lighting, camera, weather,
+                                   notifier=notifier)
                 web_dashboard.set_reload_callback(_do_reload)
                 poll_sec = cfg.getint("general", "poll_interval_seconds", fallback=30)
                 logger.info("Subsystems reloaded successfully.")
@@ -161,6 +172,20 @@ def main():
                 dl.log_readings(readings)
                 dl.purge_old_data()
                 display.update_readings(readings)
+
+                # Gecko mood transitions → Pushover (notify_mood_change handles
+                # its own enabled/configured checks)
+                try:
+                    mood_info = compute_mood(cfg, dl)
+                    new_mood  = mood_info.get("mood")
+                    if (new_mood and new_mood != "unknown"
+                            and last_mood is not None and new_mood != last_mood):
+                        notifier.notify_mood_change(last_mood, new_mood,
+                                                    mood_info.get("summary", ""))
+                    if new_mood and new_mood != "unknown":
+                        last_mood = new_mood
+                except Exception as e:
+                    logger.warning("Mood check failed: %s", e)
 
             avg_hum  = sensors.average_humidity(readings)
             avg_temp = sensors.average_temperature(readings)
