@@ -82,16 +82,25 @@ def _load_font(path, size):
 # ======================================================================
 
 class ST7789Driver:
-    def __init__(self, dc=_DC, rst=_RST, bl=_BL, spi_speed=40_000_000, brightness=80):
-        self.dc          = dc
-        self.rst         = rst
-        self.bl          = bl
-        self._brightness = max(0, min(100, brightness))
+    def __init__(self, dc=_DC, rst=_RST, bl=_BL, spi_speed=40_000_000):
+        self.dc  = dc
+        self.rst = rst
+        self.bl  = bl
+        self._bl_pwm = None
 
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         for p in [dc, rst, bl]:
             GPIO.setup(p, GPIO.OUT)
+
+        # Backlight via software PWM so we can control brightness.
+        # 200 Hz is well above visible flicker. Fall back to on/off if PWM fails.
+        try:
+            self._bl_pwm = GPIO.PWM(self.bl, 200)
+            self._bl_pwm.start(100)
+        except Exception as e:
+            logger.warning("Backlight PWM unavailable; falling back to on/off: %s", e)
+            GPIO.output(self.bl, GPIO.HIGH)
 
         self._spi = spidev.SpiDev()
         self._spi.open(0, 0)
@@ -99,6 +108,13 @@ class ST7789Driver:
         self._spi.mode = 0
 
         self._init_display()
+
+    def set_brightness(self, percent: int):
+        p = max(0, min(100, int(percent)))
+        if self._bl_pwm:
+            self._bl_pwm.ChangeDutyCycle(p)
+        else:
+            GPIO.output(self.bl, GPIO.HIGH if p > 0 else GPIO.LOW)
 
     def _cmd(self, c):
         GPIO.output(self.dc, GPIO.LOW)
@@ -117,11 +133,6 @@ class ST7789Driver:
             time.sleep(0.1)
 
     def _init_display(self):
-        # Set up backlight PWM for brightness control
-        GPIO.output(self.bl, GPIO.HIGH)
-        self._pwm = GPIO.PWM(self.bl, 1000)  # 1kHz PWM
-        self._pwm.start(self._brightness)
-
         self._reset()
         self._cmd(0x36); self._data(0x00)
         self._cmd(0x3A); self._data(0x05)
@@ -137,14 +148,7 @@ class ST7789Driver:
         self._cmd(0x11); time.sleep(0.12)
         self._cmd(0x21)                   # inversion ON
         self._cmd(0x29); time.sleep(0.05) # display on
-        logger.info("ST7789 display initialised at %d%% brightness.", self._brightness)
-
-    def set_brightness(self, percent: int):
-        """Set backlight brightness 0-100."""
-        self._brightness = max(0, min(100, percent))
-        if hasattr(self, '_pwm'):
-            self._pwm.ChangeDutyCycle(self._brightness)
-            logger.info("Display brightness set to %d%%", self._brightness)
+        logger.info("ST7789 display initialised.")
 
     def display(self, img: "Image.Image"):
         if img.size != (W, H):
@@ -165,8 +169,11 @@ class ST7789Driver:
 
     def cleanup(self):
         self.clear()
-        if hasattr(self, '_pwm'):
-            self._pwm.stop()
+        if self._bl_pwm:
+            try:
+                self._bl_pwm.stop()
+            except Exception:
+                pass
         GPIO.output(self.bl, GPIO.LOW)
         self._spi.close()
 
@@ -178,7 +185,7 @@ class ST7789Driver:
 class DisplayManager:
     def __init__(self, config: configparser.ConfigParser,
                  sensor_manager=None, mister=None, fan=None,
-                 lighting=None, weather=None):
+                 lighting=None, weather=None, data_logger=None):
         self.config         = config
         self.cfg            = config["display"]
         self.sensor_manager = sensor_manager
@@ -186,6 +193,7 @@ class DisplayManager:
         self.fan            = fan
         self.lighting       = lighting
         self.weather        = weather
+        self.data_logger    = data_logger
         self._page          = 0
         self._running       = False
         self._latest        = []
@@ -200,11 +208,10 @@ class DisplayManager:
 
         try:
             self._disp = ST7789Driver(
-                dc         = self.cfg.getint("dc_pin",    fallback=24),
-                rst        = self.cfg.getint("rst_pin",   fallback=25),
-                bl         = self.cfg.getint("bl_pin",    fallback=18),
-                spi_speed  = 40_000_000,
-                brightness = self.cfg.getint("brightness", fallback=80),
+                dc        = self.cfg.getint("dc_pin",  fallback=24),
+                rst       = self.cfg.getint("rst_pin", fallback=25),
+                bl        = self.cfg.getint("bl_pin",  fallback=18),
+                spi_speed = 40_000_000,
             )
         except Exception as e:
             logger.error("Display init failed: %s", e)
@@ -224,7 +231,10 @@ class DisplayManager:
         c = self.cfg
         self.temp_unit      = c.get("temp_unit", "F").upper()
         self.page_cycle_sec = c.getfloat("page_cycle_seconds", fallback=5)
-        self.brightness     = c.getint("brightness", fallback=80)
+        self.brightness_day   = c.getint("brightness",       fallback=80)
+        self.brightness_night = c.getint("night_brightness", fallback=15)
+        self.night_start = self._parse_hhmm(c.get("night_start", fallback="22:00"))
+        self.night_end   = self._parse_hhmm(c.get("night_end",   fallback="07:00"))
         self.temp_low       = c.getfloat("temp_low",             fallback=75.0)
         self.temp_high      = c.getfloat("temp_high",            fallback=85.0)
         self.hum_low        = c.getfloat("humidity_display_low",  fallback=50.0)
@@ -245,6 +255,41 @@ class DisplayManager:
         self.col_hum_err   = _parse_color(c.get("color_hum_error",  ""), WARN_ERR)
 
     # ------------------------------------------------------------------
+    # Brightness / night-mode helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_hhmm(s: str) -> tuple:
+        """Parse 'HH:MM' to an (hour, minute) tuple. Tuple comparison handles ordering."""
+        try:
+            h, m = s.strip().split(":")
+            return (int(h) % 24, int(m) % 60)
+        except Exception:
+            return (0, 0)
+
+    def _is_night(self) -> bool:
+        now = datetime.now()
+        cur = (now.hour, now.minute)
+        # Wrap-around case (e.g. 22:00 → 07:00): night is "after start OR before end"
+        if self.night_start > self.night_end:
+            return cur >= self.night_start or cur < self.night_end
+        # Same-day case (e.g. 13:00 → 15:00 for a midday "siesta"): in [start, end)
+        return self.night_start <= cur < self.night_end
+
+    def _apply_brightness(self):
+        if not self._disp:
+            return
+        target = self.brightness_night if self._is_night() else self.brightness_day
+        if target != getattr(self, "_last_brightness", None):
+            try:
+                self._disp.set_brightness(target)
+                self._last_brightness = target
+                logger.info("Display brightness → %d%% (%s)", target,
+                            "night" if self._is_night() else "day")
+            except Exception as e:
+                logger.warning("Failed to set brightness: %s", e)
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -253,7 +298,8 @@ class DisplayManager:
             self._latest = readings
 
     def update_components(self, sensor_manager=None, mister=None,
-                          fan=None, lighting=None, weather=None):
+                          fan=None, lighting=None, weather=None,
+                          data_logger=None):
         """Hot-swap subsystem references after a config reload."""
         with self._lock:
             if sensor_manager is not None: self.sensor_manager = sensor_manager
@@ -261,10 +307,10 @@ class DisplayManager:
             if fan            is not None: self.fan            = fan
             if lighting       is not None: self.lighting       = lighting
             if weather        is not None: self.weather        = weather
+            if data_logger    is not None: self.data_logger    = data_logger
         self.cfg = self.config["display"]
         self._load_config_values()
-        if self._disp:
-            self._disp.set_brightness(self.brightness)
+        self._last_brightness = None  # force re-apply on next loop tick
         logger.info("Display components updated.")
 
     def start(self):
@@ -286,6 +332,8 @@ class DisplayManager:
 
     def _loop(self):
         while self._running:
+            self._apply_brightness()
+
             with self._lock:
                 readings = list(self._latest)
 
@@ -297,6 +345,10 @@ class DisplayManager:
                     pages.append(self._draw_weather_page(w))
 
             pages.append(self._draw_status_page())
+
+            mood_page = self._maybe_draw_gecko_mood()
+            if mood_page is not None:
+                pages.append(mood_page)
 
             self._disp.display(pages[self._page % len(pages)])
             self._page += 1
@@ -407,29 +459,27 @@ class DisplayManager:
         img, d = self._new_canvas()
 
         d.rectangle([(0, 0), (W, 34)], fill=(20, 40, 80))
-        d.text((8, 7),    "Outdoor Weather",                font=self._fnt_small, fill=WHITE)
+        d.text((8, 7),    "Outdoor Weather",              font=self._fnt_small, fill=WHITE)
         d.text((W-58, 7), datetime.now().strftime("%H:%M"), font=self._fnt_small, fill=self.col_grey)
 
         city = w.get("city", "")
         if city:
             d.text((8, 42), city, font=self._fnt_tiny, fill=self.col_grey)
 
-        # Use weather section temp_unit if set, else fall back to display temp_unit
-        try:
-            wx_unit = self.config.get("weather", "temp_unit", fallback=None)
-            unit_str = (wx_unit or self.temp_unit).upper()
-        except Exception:
-            unit_str = self.temp_unit
-
         temp_c = w["temp_c"]
-        temp_val = temp_c * 9 / 5 + 32 if unit_str == "F" else temp_c
+        if self.temp_unit == "F":
+            temp_val = temp_c * 9 / 5 + 32
+            unit_str = "°F"
+        else:
+            temp_val = temp_c
+            unit_str = "°C"
 
-        d.text((8, 60), "TEMP",                       font=self._fnt_tiny,  fill=self.col_grey)
-        d.text((8, 74), f"{temp_val:.1f}°{unit_str}", font=self._fnt_large, fill=(255, 180, 0))
+        d.text((8, 60), "TEMP",                        font=self._fnt_tiny,  fill=self.col_grey)
+        d.text((8, 74), f"{temp_val:.1f}{unit_str}",   font=self._fnt_large, fill=(255, 180, 0))
 
         fl_c = w.get("feels_like_c", temp_c)
-        fl   = fl_c * 9 / 5 + 32 if unit_str == "F" else fl_c
-        d.text((8, 132), f"Feels like {fl:.1f}°{unit_str}", font=self._fnt_tiny, fill=self.col_grey)
+        fl   = fl_c * 9 / 5 + 32 if self.temp_unit == "F" else fl_c
+        d.text((8, 132), f"Feels like {fl:.1f}{unit_str}", font=self._fnt_tiny, fill=self.col_grey)
 
         d.line([(8, 150), (W-8, 150)], fill=(40, 40, 70), width=1)
 
@@ -477,6 +527,126 @@ class DisplayManager:
                 if y > H - 20:
                     break
         return img
+
+    def _maybe_draw_gecko_mood(self):
+        """Show a gecko mood page when the gecko isn't happy (neutral or upset).
+        Returns None if disabled or when everything is fine."""
+        if not self.data_logger:
+            return None
+        try:
+            from gecko_mood import compute_mood
+            mood = compute_mood(self.config, self.data_logger)
+        except Exception as e:
+            logger.debug("gecko_mood failed: %s", e)
+            return None
+        # Only interrupt the rotation when the gecko is actually upset — yellow
+        # alone is noisy for borderline conditions and the data is already on
+        # the main pages.
+        if not mood.get("enabled") or mood.get("mood") != "upset":
+            return None
+        return self._draw_gecko_mood_page(mood)
+
+    def _draw_gecko_mood_page(self, mood: dict) -> "Image.Image":
+        palette = {
+            "happy":   {"body": (0,  200, 120), "bg": (8,  28,  18)},
+            "neutral": {"body": (255, 200, 0),  "bg": (32, 28,  10)},
+            "upset":   {"body": (220, 60,  20), "bg": (40, 14,  10)},
+        }
+        p = palette.get(mood.get("mood", "upset"), palette["upset"])
+        body, bg = p["body"], p["bg"]
+
+        img, d = self._new_canvas()
+        d.rectangle([(0, 0), (W, H)], fill=bg)
+
+        # Title bar
+        d.text((10, 10), "GECKO MOOD", font=self._fnt_small, fill=WHITE)
+        label = mood["mood"].upper()
+        try:
+            bbox = d.textbbox((0, 0), label, font=self._fnt_small)
+            lw = bbox[2] - bbox[0]
+        except Exception:
+            lw = len(label) * 10
+        d.rectangle([(W - lw - 22, 6), (W - 10, 30)], fill=body)
+        d.text((W - lw - 16, 10), label, font=self._fnt_small, fill=(0, 0, 0))
+
+        # Gecko, drawn centered. The drawing fits inside ~200x110.
+        self._draw_gecko(d, x=20, y=70, body=body, mood=mood["mood"])
+
+        # Mood headline
+        headline = {"happy": "I'm doing great!",
+                    "neutral": "I'm a bit off",
+                    "upset": "I need attention!"}.get(mood["mood"], "")
+        try:
+            bbox = d.textbbox((0, 0), headline, font=self._fnt_med)
+            hw = bbox[2] - bbox[0]
+        except Exception:
+            hw = len(headline) * 14
+        d.text(((W - hw) // 2, 200), headline, font=self._fnt_med, fill=body)
+
+        # Reasons — show only the ones bringing the mood down
+        worst = min((r["score"] for r in mood.get("reasons", [])), default=2)
+        offenders = [r["label"] for r in mood.get("reasons", []) if r["score"] == worst]
+        y = 240
+        for line in offenders[:3]:
+            line = line[:32]  # avoid overflow
+            try:
+                bbox = d.textbbox((0, 0), line, font=self._fnt_tiny)
+                tw = bbox[2] - bbox[0]
+            except Exception:
+                tw = len(line) * 7
+            d.text(((W - tw) // 2, y), line, font=self._fnt_tiny, fill=WHITE)
+            y += 18
+
+        return img
+
+    def _draw_gecko(self, d, x: int, y: int, body: tuple, mood: str):
+        """Draw a stylized gecko at (x,y) inside a ~200x110 box, in `body` color."""
+        def ox(v): return x + v
+        def oy(v): return y + v
+
+        # Tail (polygon — approximates the curl)
+        d.polygon([
+            (ox(60),  oy(70)), (ox(40), oy(72)), (ox(24), oy(64)),
+            (ox(16),  oy(40)), (ox(24), oy(22)), (ox(40), oy(30)),
+            (ox(36),  oy(50)), (ox(54), oy(64)),
+        ], fill=body)
+
+        # Body
+        d.ellipse([ox(45), oy(50), ox(155), oy(86)], fill=body)
+        # Back leg + toes
+        d.ellipse([ox(61), oy(73), ox(79), oy(99)], fill=body)
+        for tx in (63, 70, 77):
+            d.ellipse([ox(tx-3), oy(94), ox(tx+3), oy(102)], fill=body)
+        # Front leg + toes
+        d.ellipse([ox(126), oy(73), ox(144), oy(99)], fill=body)
+        for tx in (128, 135, 142):
+            d.ellipse([ox(tx-3), oy(94), ox(tx+3), oy(102)], fill=body)
+        # Head
+        d.ellipse([ox(132), oy(30), ox(188), oy(70)], fill=body)
+
+        # Spots on the body — slightly darker than body color
+        spot = tuple(max(0, c - 60) for c in body)
+        d.ellipse([ox(82), oy(59), ox(88), oy(65)], fill=spot)
+        d.ellipse([ox(102), oy(55), ox(108), oy(61)], fill=spot)
+        d.ellipse([ox(122), oy(61), ox(128), oy(67)], fill=spot)
+
+        # Eye
+        d.ellipse([ox(166), oy(42), ox(178), oy(54)], fill=WHITE)
+        d.ellipse([ox(170), oy(46), ox(176), oy(52)], fill=(0, 0, 0))
+
+        # Mouth varies with mood
+        # Bounds for the arc: a small box around (160-178, ~58)
+        if mood == "happy":
+            # Smile (∪) — bottom half of a small circle
+            d.arc([ox(156), oy(54), ox(180), oy(68)], start=0, end=180,
+                  fill=(0, 0, 0), width=2)
+        elif mood == "neutral":
+            d.line([(ox(158), oy(60)), (ox(178), oy(60))],
+                   fill=(0, 0, 0), width=2)
+        else:  # upset
+            # Frown (∩) — top half of a small circle, sitting low
+            d.arc([ox(156), oy(60), ox(180), oy(74)], start=180, end=360,
+                  fill=(0, 0, 0), width=2)
 
     def _draw_relay_strip(self, d, y):
         items = []
