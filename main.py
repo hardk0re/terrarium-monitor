@@ -20,6 +20,7 @@ from display_manager  import DisplayManager
 from camera_manager   import CameraManager
 from weather_manager  import WeatherManager
 from pushover_notifier import PushoverNotifier
+from care_button       import CareButton
 from gecko_mood        import compute_mood
 import web_dashboard
 
@@ -106,6 +107,9 @@ def main():
     notifier = PushoverNotifier(cfg)
     dl.set_notifier(notifier)
     last_mood = None  # tracks gecko mood transitions across polls
+
+    # ── Physical care button ──────────────────────────────────────────
+    care_button = CareButton(cfg, dl)
 
     # ── Sensor failure tracking ───────────────────────────────────────
     # Per-sensor last successful read time; sensors currently in "failed"
@@ -216,19 +220,38 @@ def main():
                 dl.purge_old_data()
                 display.update_readings(readings)
 
-                # Gecko mood transitions → Pushover (notify_mood_change handles
-                # its own enabled/configured checks)
-                try:
-                    mood_info = compute_mood(cfg, dl)
-                    new_mood  = mood_info.get("mood")
-                    if (new_mood and new_mood != "unknown"
-                            and last_mood is not None and new_mood != last_mood):
-                        notifier.notify_mood_change(last_mood, new_mood,
-                                                    mood_info.get("summary", ""))
-                    if new_mood and new_mood != "unknown":
-                        last_mood = new_mood
-                except Exception as e:
-                    logger.warning("Mood check failed: %s", e)
+            # Gecko mood transitions → Pushover. Runs even when sensors fail,
+            # because mood is also driven by check-in age (care/feeding logs).
+            # notify_mood_change handles its own enabled/configured checks.
+            try:
+                mood_info = compute_mood(cfg, dl)
+                new_mood  = mood_info.get("mood")
+                summary   = mood_info.get("summary", "")
+                if new_mood and new_mood != "unknown":
+                    fire = False
+                    if last_mood is None:
+                        # First observed mood after startup: only alert if it's
+                        # already a problem state worth flagging.
+                        fire = (new_mood != "happy")
+                        prev_label = "(startup)"
+                    elif new_mood != last_mood:
+                        fire = True
+                        prev_label = last_mood
+                    if fire:
+                        notifier.notify_mood_change(prev_label, new_mood, summary)
+                        msg = f"Mood: {prev_label} → {new_mood}"
+                        if summary:
+                            msg += f" ({summary})"
+                        # Log to the event log table so it shows in the /logs viewer.
+                        # Note: this also runs through notify_event for category
+                        # "gecko" — but notify_gecko isn't a configured flag so
+                        # it stays silent and we don't double-notify.
+                        dl.log_system_event("gecko", msg)
+                        logger.info("Gecko mood: %s → %s (%s)",
+                                    prev_label, new_mood, summary)
+                    last_mood = new_mood
+            except Exception as e:
+                logger.warning("Mood check failed: %s", e)
 
             avg_hum  = sensors.average_humidity(readings)
             avg_temp = sensors.average_temperature(readings)
@@ -267,6 +290,7 @@ def main():
         # Stop the schedule loop but leave the Tapo plugs in whatever state
         # they were in — we shouldn't yank UVB / basking lights when restarting.
         lighting.stop()
+        care_button.stop()
         if mister: mister.force_off()
         if fan:    fan.force_off()
         cleanup_gpio()

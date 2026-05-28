@@ -787,7 +787,8 @@ async function refresh(){
   const catColors = {
     startup:'#00c878', shutdown:'#ff5028', config:'#50a0ff',
     relay:'#ffcc00',   light:'#ffaa00',    camera:'#aa88ff',
-    feeding:'#ff88cc', care:'#50a0ff',     error:'#ff3030'
+    feeding:'#ff88cc', care:'#50a0ff',     gecko:'#4ecdc4',
+    error:'#ff3030'
   };
   document.getElementById('events').innerHTML = d.recent_events.map(e=>`
     <tr>
@@ -1464,6 +1465,7 @@ LOGS_HTML = """<!DOCTYPE html>
     <button class="pill" data-cat="camera">camera</button>
     <button class="pill" data-cat="feeding">feeding</button>
     <button class="pill" data-cat="care">care</button>
+    <button class="pill" data-cat="gecko">gecko</button>
     <button class="pill" data-cat="error">error</button>
   </div>
 </div>
@@ -1474,7 +1476,8 @@ LOGS_HTML = """<!DOCTYPE html>
 const catColors = {
   startup:'#00c878', shutdown:'#ff5028', config:'#50a0ff',
   relay:'#ffcc00',   light:'#ffaa00',    camera:'#aa88ff',
-  feeding:'#ff88cc', care:'#50a0ff',     error:'#ff3030'
+  feeding:'#ff88cc', care:'#50a0ff',     gecko:'#4ecdc4',
+  error:'#ff3030'
 };
 let selectedCats = new Set();  // empty = all
 let hours = 24;

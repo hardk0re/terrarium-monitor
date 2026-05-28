@@ -32,6 +32,7 @@ So I built it myself. It runs entirely on the local network — no cloud, no sub
 - **Web dashboard** — live sensor data, charts, relay overrides, light controls, camera snapshot, feeding/care log, config editor
 - **Feeding log** — one-tap buttons for configurable food items (crickets, waxworms, paste, etc.)
 - **Care log** — one-tap buttons for configurable care activities (cleaning, misting, substrate change, vet visit, etc.)
+- **Physical care button** — optional momentary push-button wired to a GPIO pin that logs the first item in `[care].care_items` (e.g. "Cleaning") with one press — handy when your hands are wet from misting and the web UI isn't convenient
 - **SQLite logging** — all sensor readings, weather, relay events, and care/feeding entries stored locally with configurable retention (default 31 days)
 - **Config editor** — edit any config value from the web UI without touching the Pi
 - **Config reload** — most changes apply immediately without a restart
@@ -82,6 +83,14 @@ GND → Pin 9  (GND)
 IN  → Pin 13 (GPIO27)
 VCC → Pin 4  (5V)
 GND → Pin 14 (GND)
+```
+
+### Care Button (GPIO 23, optional)
+Momentary push-button. The internal pull-up keeps the line HIGH; pressing
+shorts it to GND. No external resistor needed.
+```
+One leg → Pin 16 (GPIO23)
+Other leg → Pin 14 (GND)  ← any GND pin works
 ```
 
 ### Waveshare 2" ST7789 Display
@@ -181,6 +190,7 @@ terrarium/
 ├── camera_manager.py       ← TAPO ONVIF camera
 ├── weather_manager.py      ← OpenWeatherMap
 ├── web_dashboard.py        ← Flask web UI
+├── care_button.py          ← GPIO push-button → care log entry
 ├── terrarium.service       ← systemd unit
 └── data/
     ├── terrarium.db        ← SQLite database (auto-created)
@@ -254,8 +264,8 @@ i2c_bus = 3
 
 ## TODO
 
-- [ ] Physical buttons on the Pi for feeding/care logging without needing the web UI
-- [ ] Push notifications (email or Telegram) when thresholds are exceeded
+- [x] Physical buttons on the Pi for feeding/care logging without needing the web UI ([care_button.py](care_button.py))
+- [x] Push notifications via Pushover ([pushover_notifier.py](pushover_notifier.py))
 - [ ] Timelapse video assembly script
 - [ ] Multi-enclosure support
 - [ ] Create 3D STL for Display / Enclosure / Sensor Mounts
