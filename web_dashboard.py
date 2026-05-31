@@ -422,9 +422,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
            font-weight:700;cursor:pointer">Log Care →</button>
 </div>
 
-<div id="gecko-wrap" class="grid" style="display:none;margin-bottom:1rem"></div>
-
-<div id="sensors" class="grid"></div>
+<!-- Gecko + live sensor cards share a single grid so they pack side-by-side.
+     display:contents makes the inner wrappers transparent so their children
+     become direct grid items of the parent. -->
+<div class="grid" style="margin-bottom:1rem">
+  <div id="gecko-wrap"   style="display:none"></div>
+  <div id="sensors"      style="display:contents"></div>
+</div>
 
 <div id="averages-wrap" style="display:none">
   <div class="section-title">📊 24h Averages</div>
@@ -590,7 +594,8 @@ async function loadGecko(){
       wrap.innerHTML = '';
       return;
     }
-    wrap.style.display = 'grid';
+    // 'contents' so the inner card flows into the shared parent grid.
+    wrap.style.display = 'contents';
     const palette = {
       happy:   {color:'#00c878', label:'Happy',   bg:'#0a2818'},
       neutral: {color:'#ffcc00', label:'Meh',     bg:'#28220a'},

@@ -264,14 +264,27 @@ def main():
                     mister.trigger(reason=f"humidity {avg_hum:.1f}% < {threshold}%")
 
             if fan and avg_temp is not None:
-                t_high = cfg.getfloat("fan", "temp_threshold_high", fallback=30.0)
-                t_low  = cfg.getfloat("fan", "temp_threshold_low",  fallback=20.0)
-                if avg_temp > t_high and not fan.is_on and not fan.in_cooldown:
-                    logger.info("Temp %.1f°C > %.1f°C – triggering fan (too hot).", avg_temp, t_high)
-                    fan.trigger(reason=f"temp {avg_temp:.1f}°C > {t_high}°C (too hot)")
-                elif avg_temp < t_low and not fan.is_on and not fan.in_cooldown:
-                    logger.info("Temp %.1f°C < %.1f°C – triggering fan (too cold).", avg_temp, t_low)
-                    fan.trigger(reason=f"temp {avg_temp:.1f}°C < {t_low}°C (too cold)")
+                # Unit the fan thresholds are written in. [fan].temp_unit
+                # overrides, else fall back to [display].temp_unit. avg_temp
+                # is always Celsius from the sensor; convert to comparison unit.
+                fan_unit = cfg.get("fan", "temp_unit", fallback="").strip().upper()
+                if fan_unit not in ("F", "C"):
+                    fan_unit = cfg.get("display", "temp_unit", fallback="F").upper()
+                avg_t = avg_temp * 9 / 5 + 32 if fan_unit == "F" else avg_temp
+                unit_lbl = "°F" if fan_unit == "F" else "°C"
+                # Defaults track the unit: ~85/65 °F vs 30/18 °C.
+                t_high = cfg.getfloat("fan", "temp_threshold_high",
+                                      fallback=85.0 if fan_unit == "F" else 30.0)
+                t_low  = cfg.getfloat("fan", "temp_threshold_low",
+                                      fallback=65.0 if fan_unit == "F" else 18.0)
+                if avg_t > t_high and not fan.is_on and not fan.in_cooldown:
+                    logger.info("Temp %.1f%s > %.1f%s – triggering fan (too hot).",
+                                avg_t, unit_lbl, t_high, unit_lbl)
+                    fan.trigger(reason=f"temp {avg_t:.1f}{unit_lbl} > {t_high}{unit_lbl} (too hot)")
+                elif avg_t < t_low and not fan.is_on and not fan.in_cooldown:
+                    logger.info("Temp %.1f%s < %.1f%s – triggering fan (too cold).",
+                                avg_t, unit_lbl, t_low, unit_lbl)
+                    fan.trigger(reason=f"temp {avg_t:.1f}{unit_lbl} < {t_low}{unit_lbl} (too cold)")
 
             # Sleep in small chunks so stop/reload events respond quickly
             for _ in range(poll_sec * 2):

@@ -32,7 +32,12 @@ def compute_mood(config, data_logger) -> dict:
     sensors_filter = {s.strip() for s in
                       config.get("gecko", "sensors", fallback="").split(",") if s.strip()}
 
-    temp_unit  = config.get("display", "temp_unit", fallback="F").upper()
+    # Unit the gecko thresholds are interpreted in. Optional [gecko].temp_unit
+    # overrides; otherwise falls back to [display].temp_unit so dashboard and
+    # thresholds always read in the same scale.
+    temp_unit = config.get("gecko", "temp_unit", fallback="").strip().upper()
+    if temp_unit not in ("F", "C"):
+        temp_unit = config.get("display", "temp_unit", fallback="F").upper()
     unit_label = "°F" if temp_unit == "F" else "°C"
 
     def band(val, min_h, max_h, min_c, max_c):
