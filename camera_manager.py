@@ -23,6 +23,16 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+# Tighten FFMPEG defaults BEFORE cv2 is imported. Without this, OpenCV's
+# RTSP backend blocks for 30 s when the camera is unreachable. stimeout is
+# microseconds (5 s) and rtsp_transport=tcp tends to be more reliable than
+# UDP for IP cameras. Override OPENCV_FFMPEG_CAPTURE_OPTIONS in the
+# environment if you need different values.
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+    "rtsp_transport;tcp|stimeout;5000000",
+)
+
 try:
     import cv2
     _CV2_OK = True
@@ -205,19 +215,25 @@ class CameraManager:
 
     def _grab_snapshot_http(self) -> bool:
         if not self._snapshot_uri:
+            logger.debug("No ONVIF snapshot URI — HTTP method unavailable.")
             return False
-        try:
-            for auth in [requests.auth.HTTPDigestAuth(self.username, self.password),
-                         (self.username, self.password)]:
+        last_status = None
+        for label, auth in [("digest", requests.auth.HTTPDigestAuth(self.username, self.password)),
+                            ("basic",  (self.username, self.password))]:
+            try:
                 r = requests.get(self._snapshot_uri, auth=auth, timeout=5, stream=True)
+                last_status = r.status_code
                 if r.status_code == 200:
                     with open(self.snap_path, "wb") as f:
                         for chunk in r.iter_content(8192):
                             f.write(chunk)
-                    logger.debug("Snapshot saved via HTTP.")
+                    logger.debug("Snapshot saved via HTTP (%s auth).", label)
                     return True
-        except Exception as e:
-            logger.warning("HTTP snapshot failed: %s", e)
+            except Exception as e:
+                logger.warning("HTTP snapshot request error (%s auth): %s", label, e)
+        if last_status is not None:
+            logger.warning("HTTP snapshot got HTTP %d from %s — likely auth or URI wrong.",
+                           last_status, self._snapshot_uri)
         return False
 
     def _grab_snapshot_rtsp(self) -> bool:

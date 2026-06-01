@@ -108,8 +108,18 @@ def main():
     dl.set_notifier(notifier)
     last_mood = None  # tracks gecko mood transitions across polls
 
-    # ── Physical care button ──────────────────────────────────────────
-    care_button = CareButton(cfg, dl)
+    # ── Physical buttons (up to 3) ────────────────────────────────────
+    care_buttons = []
+    seen_pins    = set()
+    for sec in ("care_button_1", "care_button_2", "care_button_3"):
+        if not cfg.has_section(sec):
+            continue
+        b = CareButton(cfg, dl, sec)
+        if b.pin is not None and b.pin not in seen_pins:
+            care_buttons.append(b)
+            seen_pins.add(b.pin)
+        elif b.pin is not None:
+            logger.warning("%s: GPIO %d already in use, skipping.", sec, b.pin)
 
     # ── Sensor failure tracking ───────────────────────────────────────
     # Per-sensor last successful read time; sensors currently in "failed"
@@ -303,7 +313,8 @@ def main():
         # Stop the schedule loop but leave the Tapo plugs in whatever state
         # they were in — we shouldn't yank UVB / basking lights when restarting.
         lighting.stop()
-        care_button.stop()
+        for b in care_buttons:
+            b.stop()
         if mister: mister.force_off()
         if fan:    fan.force_off()
         cleanup_gpio()

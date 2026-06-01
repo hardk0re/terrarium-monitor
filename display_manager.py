@@ -539,10 +539,8 @@ class DisplayManager:
         except Exception as e:
             logger.debug("gecko_mood failed: %s", e)
             return None
-        # Only interrupt the rotation when the gecko is actually upset — yellow
-        # alone is noisy for borderline conditions and the data is already on
-        # the main pages.
-        if not mood.get("enabled") or mood.get("mood") != "upset":
+        # Show whenever the gecko isn't happy — neutral (yellow) or upset (red).
+        if not mood.get("enabled") or mood.get("mood") not in ("neutral", "upset"):
             return None
         return self._draw_gecko_mood_page(mood)
 
