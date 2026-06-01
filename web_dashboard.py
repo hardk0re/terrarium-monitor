@@ -237,6 +237,8 @@ CONFIG_HTML = """<!DOCTYPE html>
   <a href="/config-logout">Logout</a>
   <button id="pushover-test-btn" style="background:#3a87f0;color:#fff;padding:.3rem .9rem;border-radius:8px;border:0;font-weight:600;cursor:pointer;font-size:.85rem;margin-left:.5rem" onclick="testPushover()">&#128276; Test Pushover</button>
   <span id="pushover-test-msg" style="margin-left:.6rem;font-size:.85rem;color:#7878a0"></span>
+  <button id="clear-sensors-btn" style="background:#aa3030;color:#fff;padding:.3rem .9rem;border-radius:8px;border:0;font-weight:600;cursor:pointer;font-size:.85rem;margin-left:.5rem" onclick="clearSensors()">&#128465; Clear Sensor Data</button>
+  <span id="clear-sensors-msg" style="margin-left:.6rem;font-size:.85rem;color:#7878a0"></span>
   <button id="restart-btn" style="background:#ff8800;color:#000;padding:.3rem .9rem;border-radius:8px;border:0;font-weight:600;cursor:pointer;font-size:.85rem;margin-left:.5rem" onclick="restartPython()">&#8635; Restart</button>
 </div>
 <script>
@@ -252,6 +254,31 @@ async function testPushover(){
     const d = await r.json();
     msg.textContent = d.message || (d.ok ? "Sent." : "Failed.");
     msg.style.color = d.ok ? "#00c878" : "#ff5028";
+  } catch(e){
+    msg.textContent = "Request error: " + e;
+    msg.style.color = "#ff5028";
+  } finally {
+    btn.disabled = false; btn.textContent = oldText;
+    setTimeout(()=>{ msg.textContent = ""; }, 6000);
+  }
+}
+async function clearSensors(){
+  if(!confirm("Delete ALL indoor sensor history (temp/humidity readings)?\\n\\nThis cannot be undone. Outdoor weather and the event log are NOT affected.")) return;
+  const btn = document.getElementById("clear-sensors-btn");
+  const msg = document.getElementById("clear-sensors-msg");
+  btn.disabled = true; const oldText = btn.textContent;
+  btn.textContent = "Clearing...";
+  msg.textContent = ""; msg.style.color = "#7878a0";
+  try {
+    const r = await fetch("/api/sensors/clear", {method: "POST"});
+    const d = await r.json();
+    if(d.ok){
+      msg.textContent = `Cleared ${d.rows} rows.`;
+      msg.style.color = "#00c878";
+    } else {
+      msg.textContent = "Failed: " + (d.error || "unknown error");
+      msg.style.color = "#ff5028";
+    }
   } catch(e){
     msg.textContent = "Request error: " + e;
     msg.style.color = "#ff5028";
@@ -1244,6 +1271,25 @@ def api_log_clear():
         if _data_logger:
             _data_logger.log_system_event("config", "Event log cleared via web UI")
         return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/sensors/clear", methods=["POST"])
+@_auth_required
+def api_sensors_clear():
+    """Wipe all indoor sensor history (sensor_readings table). Destructive — no undo.
+    Does not touch outdoor weather, event log, or relay history."""
+    try:
+        from data_logger import _conn
+        with _conn() as con:
+            rows = con.execute("DELETE FROM sensor_readings").rowcount
+        if _data_logger:
+            _data_logger.log_system_event(
+                "config",
+                f"Sensor data cleared via web UI ({rows} rows)."
+            )
+        return jsonify({"ok": True, "rows": rows})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

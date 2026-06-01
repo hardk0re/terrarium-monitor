@@ -32,7 +32,7 @@ So I built it myself. It runs entirely on the local network — no cloud, no sub
 - **Web dashboard** — live sensor data, charts, relay overrides, light controls, camera snapshot, feeding/care log, config editor
 - **Feeding log** — one-tap buttons for configurable food items (crickets, waxworms, paste, etc.)
 - **Care log** — one-tap buttons for configurable care activities (cleaning, misting, substrate change, vet visit, etc.)
-- **Physical care button** — optional momentary push-button wired to a GPIO pin that logs the first item in `[care].care_items` (e.g. "Cleaning") with one press — handy when your hands are wet from misting and the web UI isn't convenient
+- **Physical buttons** — up to three optional momentary push-buttons wired to GPIO pins, each with its own configurable log category (`care`, `feeding`, etc.) and message — handy when your hands are wet from misting and the web UI isn't convenient (one press → one log entry → Pushover if that category is enabled)
 - **SQLite logging** — all sensor readings, weather, relay events, and care/feeding entries stored locally with configurable retention (default 31 days)
 - **Config editor** — edit any config value from the web UI without touching the Pi
 - **Config reload** — most changes apply immediately without a restart
@@ -85,13 +85,22 @@ VCC → Pin 4  (5V)
 GND → Pin 14 (GND)
 ```
 
-### Care Button (GPIO 23, optional)
-Momentary push-button. The internal pull-up keeps the line HIGH; pressing
-shorts it to GND. No external resistor needed.
+### Care/Feeding Buttons (up to 3, optional)
+Momentary push-buttons. The internal pull-up keeps each line HIGH; pressing
+shorts it to GND. No external resistors needed. Each button is independent —
+enable only the ones you've wired in `config.ini` under `[care_button_1]`,
+`[care_button_2]`, `[care_button_3]`.
+
 ```
-One leg → Pin 16 (GPIO23)
-Other leg → Pin 14 (GND)  ← any GND pin works
+Button 1: GPIO23  (Pin 16) ─┐
+Button 2: GPIO24  (Pin 18) ─┼──── other leg → any GND pin (e.g. Pin 14)
+Button 3: GPIO25  (Pin 22) ─┘
 ```
+
+Each button section sets its own `category` (e.g. `care`, `feeding`) and
+`message` (e.g. `Cleaning`, `Cricket`) — when pressed, that text is logged
+under that category, shows up in the event log, and fires a Pushover
+notification if `notify_<category>` is enabled in `[pushover]`.
 
 ### Waveshare 2" ST7789 Display
 ```
@@ -190,7 +199,7 @@ terrarium/
 ├── camera_manager.py       ← TAPO ONVIF camera
 ├── weather_manager.py      ← OpenWeatherMap
 ├── web_dashboard.py        ← Flask web UI
-├── care_button.py          ← GPIO push-button → care log entry
+├── care_button.py          ← GPIO push-buttons (up to 3) → log entries
 ├── terrarium.service       ← systemd unit
 └── data/
     ├── terrarium.db        ← SQLite database (auto-created)
