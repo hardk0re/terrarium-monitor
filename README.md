@@ -354,12 +354,18 @@ LCD Screen:
 
 
 Main Website:
-<img width="1411" height="1004" alt="image" src="https://github.com/user-attachments/assets/451b2bb9-7731-497f-988b-08cc1bf47987" />
-<img width="1420" height="653" alt="image" src="https://github.com/user-attachments/assets/df0703fc-5c58-4ab6-9b3f-9acd351674c8" />
+<img width="1549" height="885" alt="image" src="https://github.com/user-attachments/assets/e6784ec4-9f8d-4bc0-b9d2-dd6a82b89407" />
+<img width="1554" height="753" alt="image" src="https://github.com/user-attachments/assets/f91a0f3e-a688-4392-9271-b7c5c5f8e029" />
+<img width="1552" height="745" alt="image" src="https://github.com/user-attachments/assets/b04e211b-7818-469e-9037-8371b906c45b" />
 
 
 Configuration Editor:
-<img width="1617" height="1035" alt="image" src="https://github.com/user-attachments/assets/aa1e9c56-a878-49ea-a921-ab83961066b2" />
+<img width="1558" height="944" alt="image" src="https://github.com/user-attachments/assets/e8f28b19-e6ad-443a-9a04-fa0943a4852a" />
+
+TimeLapse:
+<img width="1521" height="494" alt="image" src="https://github.com/user-attachments/assets/88954f4a-ce45-456d-8eab-79b22149b35a" />
+
+
 
 
 
