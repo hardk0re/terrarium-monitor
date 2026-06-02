@@ -959,6 +959,29 @@ async function loadCamera(){
     d.rtsp_uri?'RTSP: '+d.rtsp_uri.replace(/:[^@]+@/,':***@'):'';
   refreshSnap();
 }
+// Centered moving average — smooths noisy 30s-poll readings without losing
+// raw data in the DB. Window of 11 ≈ 5.5 minutes at the default poll rate.
+// Bump this for a flatter line, drop it (or set to 1) to disable smoothing.
+const CHART_SMOOTH_WINDOW = 11;
+function movingAverage(data, window){
+  if(window <= 1 || !data.length) return data.slice();
+  const half = Math.floor(window / 2);
+  const out  = new Array(data.length);
+  for(let i = 0; i < data.length; i++){
+    let sum = 0, count = 0;
+    const lo = Math.max(0, i - half);
+    const hi = Math.min(data.length - 1, i + half);
+    for(let j = lo; j <= hi; j++){
+      const v = data[j];
+      if(v !== null && v !== undefined && !isNaN(v)){
+        sum += v; count++;
+      }
+    }
+    out[i] = count ? sum / count : null;
+  }
+  return out;
+}
+
 async function loadChart(){
   const r=await fetch('/api/history?hours=24');
   const rows=await r.json();
@@ -973,8 +996,10 @@ async function loadChart(){
   const datasets=[];
   let ci=0;
   for(const [name,data] of Object.entries(sensors)){
-    datasets.push({label:`${name} Temp`,data:data.temp,borderColor:colors[ci],tension:.3,yAxisID:'temp',pointRadius:0});
-    datasets.push({label:`${name} Hum`,data:data.hum,borderColor:colors[ci],borderDash:[4,4],tension:.3,yAxisID:'hum',pointRadius:0});
+    const smoothedTemp = movingAverage(data.temp, CHART_SMOOTH_WINDOW);
+    const smoothedHum  = movingAverage(data.hum,  CHART_SMOOTH_WINDOW);
+    datasets.push({label:`${name} Temp`,data:smoothedTemp,borderColor:colors[ci],tension:.3,yAxisID:'temp',pointRadius:0,borderWidth:2});
+    datasets.push({label:`${name} Hum`, data:smoothedHum, borderColor:colors[ci],borderDash:[4,4],tension:.3,yAxisID:'hum',pointRadius:0,borderWidth:2});
     ci=(ci+1)%colors.length;
   }
   const labels=rows.length?Object.values(sensors)[0].labels:[];
@@ -1084,7 +1109,7 @@ def api_history():
     for row in rows:
         tc = row["temp_c"]
         row["temp_display_val"] = round(tc * 9/5 + 32 if temp_unit == "F" else tc, 1)
-        row["ts_local"] = row["ts"].replace("T"," ")[:16]
+        row["ts_local"] = _utc_to_local(row["ts"])
     return jsonify(rows)
 
 
