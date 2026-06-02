@@ -165,7 +165,8 @@ pip install \
 
 ### 4. Configure
 ```bash
-nano config.ini
+cp sample_config.ini config.ini
+vi config.ini
 ```
 
 Key things to set:
