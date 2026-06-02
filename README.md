@@ -21,20 +21,28 @@ So I built it myself. It runs entirely on the local network — no cloud, no sub
 
 ## Features
 
-- **Dual SHT31-D sensor monitoring** — temperature and humidity from up to N sensors (expandable via config)
-- **ST7789 2" display** — cycles through indoor sensors, outdoor weather, and system status
+- **Dual SHT31-D sensor monitoring** — temperature and humidity from up to N sensors (expandable via config), with optional per-sensor calibration offsets for chip-to-chip variance
+- **ST7789 2" display** — sensor data by default; pre-empts to a gecko-mood page when the gecko isn't happy, and flashes a confirmation screen when a physical button is pressed
+- **Day/night display brightness** — PWM-controlled backlight with a separate `night_brightness` and configurable `night_start` / `night_end` window
 - **Colour-coded readings** — green = good range, blue = too cold/dry, red = too hot/humid, yellow = sensor error
 - **Misting control** — 5V relay triggers automatically when humidity drops below threshold, with configurable runtime, cooldown delay, and 24-hour run cap
-- **Fan control** — separate 5V relay for high/low temperature, same configurable runtime and cooldown system
-- **TAPO/KASA smart plug lighting** — local API control, no cloud required, fully scheduled (on/off time per plug)
-- **TAPO camera** — ONVIF snapshot every 30 seconds, live image in web dashboard, optional timelapse with configurable retention
-- **Outdoor weather** — OpenWeatherMap integration, 24h history chart, shows on display cycle
+- **Fan control** — separate 5V relay for high/low temperature, same configurable runtime and cooldown system; threshold unit (`F`/`C`) follows the display unit or can be set per section
+- **TAPO/KASA smart plug lighting** — local API control, no cloud required, fully scheduled (on/off time per plug); shutdown leaves plugs in whatever state they were in
+- **TAPO camera** — ONVIF snapshot every 30 seconds, live image in web dashboard, optional timelapse viewer with scrub bar + playback controls and configurable retention
+- **Outdoor weather** — OpenWeatherMap integration with current conditions card, 24h history chart, and feels-like / wind
+- **Gecko mood widget** — color-changing gecko (green/yellow/red) on the dashboard derived from temperature, humidity, and check-in recency; tunable thresholds in `[gecko]`. Mood transitions are logged and Pushover-notified.
+- **Pushover notifications** — per-category toggles (startup/shutdown/care/feeding/relay/error/etc.), louder sounds for errors and upset-gecko transitions, plus a one-click **Test Pushover** button on the config page
+- **Care / feeding check-in reminder** — dashboard banner + Pushover when no care or feeding log has been recorded in `care_reminder_hours`
+- **Sensor failure alerts** — if a sensor goes silent for `sensor_failure_alert_minutes`, an `error` event is raised (and Pushover-notified)
+- **24h sensor averages widget** — average temp + half-moon humidity gauge per sensor, colour-banded with the same thresholds as the OLED
+- **System stats widget** — CPU temperature, CPU %, RAM %, free disk, and uptime, with colour thresholds
 - **Web dashboard** — live sensor data, charts, relay overrides, light controls, camera snapshot, feeding/care log, config editor
+- **Event log viewer** — `/logs` page with category pills (care, feeding, gecko, relay, error, …), time-range filter, and full-text search
 - **Feeding log** — one-tap buttons for configurable food items (crickets, waxworms, paste, etc.)
 - **Care log** — one-tap buttons for configurable care activities (cleaning, misting, substrate change, vet visit, etc.)
-- **Physical buttons** — up to three optional momentary push-buttons wired to GPIO pins, each with its own configurable log category (`care`, `feeding`, etc.) and message — handy when your hands are wet from misting and the web UI isn't convenient (one press → one log entry → Pushover if that category is enabled)
-- **SQLite logging** — all sensor readings, weather, relay events, and care/feeding entries stored locally with configurable retention (default 31 days)
-- **Config editor** — edit any config value from the web UI without touching the Pi
+- **Physical buttons** — up to three optional momentary push-buttons wired to GPIO pins, each with its own configurable log category (`care`, `feeding`, etc.) and message — handy when your hands are wet from misting and the web UI isn't convenient (one press → one log entry → display flash → Pushover if that category is enabled)
+- **SQLite logging** — all sensor readings, weather, relay events, and care/feeding entries stored locally with configurable retention (default 31 days); web buttons to clear sensor data or the event log
+- **Config editor** — edit any config value from the web UI without touching the Pi, plus a **Restart** button that asks systemd to bounce the service
 - **Config reload** — most changes apply immediately without a restart
 - **Systemd service** — auto-starts on boot, restarts on crash
 
@@ -193,18 +201,27 @@ sudo journalctl -u terrarium -f
 
 ```
 terrarium/
-├── config.ini              ← all settings
-├── main.py                 ← entry point
-├── sensor_manager.py       ← SHT31 sensor reading
-├── data_logger.py          ← SQLite storage
-├── relay_controller.py     ← GPIO relay control
-├── tapo_controller.py      ← smart plug control
-├── display_manager.py      ← ST7789 display driver
-├── camera_manager.py       ← TAPO ONVIF camera
-├── weather_manager.py      ← OpenWeatherMap
-├── web_dashboard.py        ← Flask web UI
-├── care_button.py          ← GPIO push-buttons (up to 3) → log entries
-├── terrarium.service       ← systemd unit
+├── config.ini                  ← all settings
+├── main.py                     ← entry point
+├── sensor_manager.py           ← SHT31 sensor reading
+├── data_logger.py              ← SQLite storage
+├── relay_controller.py         ← GPIO relay control
+├── tapo_controller.py          ← smart plug control
+├── display_manager.py          ← ST7789 display driver
+├── camera_manager.py           ← TAPO ONVIF camera
+├── weather_manager.py          ← OpenWeatherMap
+├── web_dashboard.py            ← Flask web UI
+├── care_button.py              ← GPIO push-buttons (up to 3) → log entries
+├── gecko_mood.py               ← shared mood scoring (dashboard + OLED)
+├── pushover_notifier.py        ← Pushover push notifications
+├── terrarium.service           ← systemd unit
+└── stls/
+    ├── LCD-CASE.stl            ← Front of LCD Case
+    ├── LCD-REARCOVER.stl       ← Rear Cover
+    ├── LCD-RETENTION.stl       ← Retention bar for LCD
+    ├── LCD-ButtonRetention.stl ← Retention plates for standard project buttons
+    ├── SHT31_BOTTOM.stl        ← SHT31 Case - Bottom
+    ├── SHT31_TOP.stl           ← SHT31 Case - Top
 └── data/
     ├── terrarium.db        ← SQLite database (auto-created)
     ├── terrarium.log       ← log file (auto-created)
@@ -219,13 +236,23 @@ terrarium/
 | URL | Description |
 |-----|-------------|
 | `http://<pi-ip>:8080/` | Live dashboard |
+| `http://<pi-ip>:8080/logs` | Filterable event log viewer |
+| `http://<pi-ip>:8080/timelapse` | Timelapse viewer with playback / scrubber |
 | `http://<pi-ip>:8080/config` | Config editor (password protected) |
 | `http://<pi-ip>:8080/api/status` | JSON status snapshot |
 | `http://<pi-ip>:8080/api/history?hours=24` | Sensor history |
+| `http://<pi-ip>:8080/api/sensors/averages?hours=24` | Per-sensor 24h averages |
 | `http://<pi-ip>:8080/api/weather/history` | Weather history |
+| `http://<pi-ip>:8080/api/gecko/status` | Current gecko mood + per-factor reasons |
+| `http://<pi-ip>:8080/api/care/status` | Whether a care/feeding check-in is overdue |
+| `http://<pi-ip>:8080/api/system/stats` | CPU temp / CPU % / RAM / free disk / uptime |
+| `http://<pi-ip>:8080/api/logs?hours=24&categories=care,feeding&q=cricket` | Filtered event log |
 | `POST /api/relay/Mister/on` | Force mister on |
 | `POST /api/relay/Fan/off` | Force fan off |
 | `POST /api/light/UVB%20Light/on` | Force plug on |
+| `POST /api/pushover/test` | Send a test Pushover notification |
+| `POST /api/sensors/clear` | Wipe all indoor sensor history |
+| `POST /api/log/clear` | Wipe the event + relay log |
 
 ---
 
@@ -273,18 +300,43 @@ i2c_bus = 3
 
 > **Note:** Only two I²C addresses are available on a single bus (0x44 and 0x45). For more than two sensors on the same bus, use a TCA9548A I²C multiplexer.
 
----
 
-## TODO
+## Security
 
-- [x] Physical buttons on the Pi for feeding/care logging without needing the web UI ([care_button.py](care_button.py))
-- [x] Push notifications via Pushover ([pushover_notifier.py](pushover_notifier.py))
-- [x] Timelapse video review
-- [ ] Multi-enclosure support
-- [ ] Create 3D STL for Display / Enclosure / Sensor Mounts
-- [ ] Actually waiting on sensors so haven't even tested THAT code yet! :)
+> ⚠️ **Do not expose this dashboard directly to the public internet.** It's
+> designed for use on a trusted LAN only. The dashboard is wide open by
+> default, multiple destructive endpoints (`/api/relay/*`, `/api/shutdown`,
+> `/api/sensors/clear`, `/api/log/clear`, the config editor) require no auth
+> unless you flip `auth_enabled = true`, and there's no CSRF protection or
+> HTTPS in front of Flask.
 
----
+**Use it on your home LAN.** That's the whole threat model the project was
+built for. Family members poking buttons is fine — exposing port 8080 on
+your router is not.
+
+**If you genuinely need to reach it while away from home**, use one of these
+instead of port-forwarding:
+
+- **[Tailscale](https://tailscale.com/)** (recommended) — install on your Pi and your phone/laptop;
+  the dashboard becomes reachable at the Pi's Tailscale IP from any of your
+  enrolled devices, with no public exposure. Setup is ~10 minutes.
+- **[Cloudflare Tunnel](https://www.cloudflare.com/products/tunnel/) with Access policy** — gives you a real hostname
+  with Cloudflare's auth in front, never opens a router port.
+- **SSH tunnel** — quick and dirty: `ssh -L 8080:localhost:8080 pi@home`,
+  then visit `http://localhost:8080` in your browser.
+
+**Even on your LAN**, a few cheap hardening steps are worth doing:
+
+1. Set `auth_enabled = true` in `[web]` and change the default `password = terrarium`.
+2. Change `app.secret_key` in `web_dashboard.py` to a random value
+   (`python3 -c "import secrets; print(secrets.token_hex(32))"`). Without
+   this, anyone who has seen the public repo can forge a logged-in session
+   cookie.
+3. Treat **anything you've ever put in `config.ini` while it was in a public
+   git repo as compromised** — rotate camera, Pushover, OpenWeather, and any
+   smart-plug credentials that have been pushed publicly.
+4. Add a `.gitignore` for `config.ini` and `data/` so secrets and your
+   sensor history don't end up in commits going forward.
 
 ## Notes
 
