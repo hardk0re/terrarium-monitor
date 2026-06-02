@@ -200,6 +200,13 @@ class DisplayManager:
         self._lock          = threading.Lock()
         self._disp          = None
 
+        # Flash channel: lets external code (e.g. care buttons) interrupt the
+        # page rotation with a brief confirmation screen.
+        self._flash_lock     = threading.Lock()
+        self._flash_payload  = None
+        self._flash_event    = threading.Event()
+        self._flash_duration = 2.5  # seconds the flash screen stays up
+
         self._load_config_values()
 
         if not self.cfg.getboolean("enabled", fallback=True) or not _HW_OK or not _PIL_OK:
@@ -297,6 +304,16 @@ class DisplayManager:
         with self._lock:
             self._latest = readings
 
+    def flash(self, category: str, message: str):
+        """Briefly interrupt the page rotation with a confirmation screen.
+        Safe to call from any thread (button callbacks, web handlers, etc.).
+        No-op if the display isn't active."""
+        if not self._disp:
+            return
+        with self._flash_lock:
+            self._flash_payload = (category or "", message or "")
+        self._flash_event.set()
+
     def update_components(self, sensor_manager=None, mister=None,
                           fan=None, lighting=None, weather=None,
                           data_logger=None):
@@ -334,17 +351,29 @@ class DisplayManager:
         while self._running:
             self._apply_brightness()
 
+            # Pre-empt with a flash if one has been queued since last tick.
+            flash = None
+            with self._flash_lock:
+                if self._flash_payload:
+                    flash = self._flash_payload
+                    self._flash_payload = None
+            self._flash_event.clear()
+            if flash:
+                try:
+                    self._disp.display(self._draw_flash_page(*flash))
+                except Exception as e:
+                    logger.warning("Flash render failed: %s", e)
+                # Wake early if another flash comes in during this dwell.
+                self._flash_event.wait(timeout=self._flash_duration)
+                continue  # Skip the normal page on this tick; resume next.
+
             with self._lock:
                 readings = list(self._latest)
 
+            # Default rotation = just the sensor page. Other pages only join
+            # the rotation when there's something worth surfacing (e.g. the
+            # gecko mood drops below happy).
             pages = [self._draw_all_sensors_page(readings)]
-
-            if self.weather and self.weather.enabled:
-                w = self.weather.latest()
-                if w:
-                    pages.append(self._draw_weather_page(w))
-
-            pages.append(self._draw_status_page())
 
             mood_page = self._maybe_draw_gecko_mood()
             if mood_page is not None:
@@ -352,7 +381,8 @@ class DisplayManager:
 
             self._disp.display(pages[self._page % len(pages)])
             self._page += 1
-            time.sleep(self.page_cycle_sec)
+            # Interruptible sleep: a queued flash wakes us up immediately.
+            self._flash_event.wait(timeout=self.page_cycle_sec)
 
     # ------------------------------------------------------------------
     # Colour helpers
@@ -526,6 +556,67 @@ class DisplayManager:
                 y += 38
                 if y > H - 20:
                     break
+        return img
+
+    def _draw_flash_page(self, category: str, message: str):
+        """Full-screen confirmation page shown briefly after a button press."""
+        # Background colour per category — mirrors dashboard catColors.
+        palette = {
+            "care":     (30, 80, 160),
+            "feeding":  (140, 40, 100),
+            "gecko":    (20, 100, 90),
+            "error":    (140, 20, 20),
+            "config":   (30, 80, 160),
+            "startup":  (0, 100, 60),
+            "shutdown": (140, 20, 20),
+            "relay":    (140, 100, 20),
+            "light":    (140, 100, 20),
+            "camera":   (80, 50, 120),
+        }
+        bg = palette.get(category, (40, 40, 80))
+
+        img, d = self._new_canvas()
+        d.rectangle([(0, 0), (W, H)], fill=bg)
+
+        # Big white checkmark, centred upper half.
+        # Two-line stroke from lower-left to upper-right.
+        d.line([(70,  120), (110, 165)], fill=WHITE, width=8)
+        d.line([(108, 165), (180, 75)],  fill=WHITE, width=8)
+
+        # "LOGGED" headline (smaller, above the message)
+        headline = "LOGGED"
+        try:
+            bbox = d.textbbox((0, 0), headline, font=self._fnt_small)
+            hw = bbox[2] - bbox[0]
+        except Exception:
+            hw = len(headline) * 10
+        d.text(((W - hw) // 2, 195), headline, font=self._fnt_small, fill=WHITE)
+
+        # The activity message — try large font, drop to medium if it overflows.
+        try:
+            bbox = d.textbbox((0, 0), message, font=self._fnt_med)
+            mw = bbox[2] - bbox[0]
+        except Exception:
+            mw = len(message) * 14
+        font = self._fnt_med
+        if mw > W - 16:
+            font = self._fnt_small
+            try:
+                bbox = d.textbbox((0, 0), message, font=font)
+                mw = bbox[2] - bbox[0]
+            except Exception:
+                mw = len(message) * 10
+        d.text(((W - mw) // 2, 220), message, font=font, fill=WHITE)
+
+        # Category label at the bottom in subtle text.
+        tag = f"[{category}]"
+        try:
+            bbox = d.textbbox((0, 0), tag, font=self._fnt_tiny)
+            tw = bbox[2] - bbox[0]
+        except Exception:
+            tw = len(tag) * 7
+        d.text(((W - tw) // 2, H - 30), tag,
+               font=self._fnt_tiny, fill=(220, 220, 220))
         return img
 
     def _maybe_draw_gecko_mood(self):

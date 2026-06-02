@@ -61,7 +61,7 @@ Usefull RPI3 Pin-Out:
 
 ### SHT31-D Sensors (I²C)
 ```
-Sensor 1 (0x44) → ADDR pin to GND
+Sensor 1 (0x44) → ADDR pin to GND or OPEN
 Sensor 2 (0x45) → ADDR pin to 3.3V
 
 Both sensors:
@@ -91,10 +91,14 @@ shorts it to GND. No external resistors needed. Each button is independent —
 enable only the ones you've wired in `config.ini` under `[care_button_1]`,
 `[care_button_2]`, `[care_button_3]`.
 
+These default pins are deliberately on the bottom-right corner of the header
+so they don't collide with the display (which uses GPIO 24/25) and share a
+single nearby GND:
+
 ```
-Button 1: GPIO23  (Pin 16) ─┐
-Button 2: GPIO24  (Pin 18) ─┼──── other leg → any GND pin (e.g. Pin 14)
-Button 3: GPIO25  (Pin 22) ─┘
+Button 1: GPIO13  (Pin 33) ─┐
+Button 2: GPIO19  (Pin 35) ─┼──── other leg → GND on Pin 39
+Button 3: GPIO26  (Pin 37) ─┘
 ```
 
 Each button section sets its own `category` (e.g. `care`, `feeding`) and

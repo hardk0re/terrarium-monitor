@@ -114,7 +114,7 @@ def main():
     for sec in ("care_button_1", "care_button_2", "care_button_3"):
         if not cfg.has_section(sec):
             continue
-        b = CareButton(cfg, dl, sec)
+        b = CareButton(cfg, dl, sec, display=display)
         if b.pin is not None and b.pin not in seen_pins:
             care_buttons.append(b)
             seen_pins.add(b.pin)
@@ -125,7 +125,7 @@ def main():
     # Per-sensor last successful read time; sensors currently in "failed"
     # state so we only notify on transitions (not every poll).
     from datetime import datetime as _dt
-    sensor_last_good = {n: _dt.utcnow() for n, _, _ in sensors.sensors}
+    sensor_last_good = {t[0]: _dt.utcnow() for t in sensors.sensors}
     sensor_failed = set()
 
     # ── Reload / shutdown events ──────────────────────────────────────
@@ -197,7 +197,7 @@ def main():
                                              fallback=10.0)
                 if threshold_min > 0:
                     now_utc = _dt.utcnow()
-                    enabled_names = {n for n, _, _ in sensors.sensors}
+                    enabled_names = {t[0] for t in sensors.sensors}
                     got_names     = {r.name for r in readings}
                     # Track any newly-added sensors (e.g. after a reload)
                     for n in enabled_names:

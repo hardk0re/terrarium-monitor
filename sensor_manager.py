@@ -32,7 +32,8 @@ class SensorReading:
 class SensorManager:
     def __init__(self, config: configparser.ConfigParser):
         self.config = config
-        self.sensors = []   # list of (name, address, sht31_device)
+        # Each entry: (name, address, sht31_device, temp_offset_c, humidity_offset)
+        self.sensors = []
         self._init_sensors()
 
     def _init_sensors(self):
@@ -48,9 +49,11 @@ class SensorManager:
                 logger.info("Sensor [%s] disabled, skipping.", section)
                 continue
 
-            name    = cfg.get("name", section)
-            addr    = int(cfg.get("i2c_address", "0x44"), 16)
-            bus_num = cfg.getint("i2c_bus", 1)
+            name        = cfg.get("name", section)
+            addr        = int(cfg.get("i2c_address", "0x44"), 16)
+            bus_num     = cfg.getint("i2c_bus", 1)
+            temp_offset = cfg.getfloat("temp_offset_c",  fallback=0.0)
+            hum_offset  = cfg.getfloat("humidity_offset", fallback=0.0)
 
             if bus_num not in bus_cache:
                 try:
@@ -66,18 +69,24 @@ class SensorManager:
 
             try:
                 device = adafruit_sht31d.SHT31D(bus_cache[bus_num], address=addr)
-                self.sensors.append((name, addr, device))
-                logger.info("Initialised sensor '%s' at 0x%02X on bus %d", name, addr, bus_num)
+                self.sensors.append((name, addr, device, temp_offset, hum_offset))
+                msg = f"Initialised sensor '{name}' at 0x{addr:02X} on bus {bus_num}"
+                if temp_offset or hum_offset:
+                    msg += f" (offsets: temp {temp_offset:+.2f}°C, hum {hum_offset:+.2f}%)"
+                logger.info(msg)
             except Exception as e:
                 logger.error("Failed to init sensor '%s' at 0x%02X: %s", name, addr, e)
 
     def read_all(self) -> list[SensorReading]:
-        """Read temperature and humidity from every configured sensor."""
+        """Read temperature and humidity from every configured sensor,
+        applying per-sensor calibration offsets."""
         readings = []
-        for name, addr, device in self.sensors:
+        for name, addr, device, temp_offset, hum_offset in self.sensors:
             try:
-                temp = device.temperature   # °C
-                hum  = device.relative_humidity
+                temp = device.temperature + temp_offset       # °C, calibrated
+                hum  = device.relative_humidity + hum_offset  # %,  calibrated
+                # Humidity is physically bounded; clamp to keep it sane.
+                hum = max(0.0, min(100.0, hum))
                 readings.append(SensorReading(name, addr, temp, hum))
                 logger.debug("Sensor '%s': %.2f°C  %.2f%%RH", name, temp, hum)
             except Exception as e:

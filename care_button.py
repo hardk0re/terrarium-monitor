@@ -28,9 +28,11 @@ logger = logging.getLogger(__name__)
 
 
 class CareButton:
-    def __init__(self, config, data_logger, section: str = "care_button"):
+    def __init__(self, config, data_logger, section: str = "care_button",
+                 display=None):
         self.config      = config
         self.data_logger = data_logger
+        self.display     = display
         self.section     = section
         self.pin         = None
         self.pull_up     = True
@@ -51,7 +53,7 @@ class CareButton:
             logger.warning("%s enabled but RPi.GPIO not available.", section)
             return
 
-        pin         = cfg.getint("gpio_pin",    fallback=23)
+        pin         = cfg.getint("gpio_pin",    fallback=13)
         pull_up     = cfg.getboolean("pull_up", fallback=True)
         debounce_ms = cfg.getint("debounce_ms", fallback=300)
         category    = (cfg.get("category", fallback="care").strip() or "care")
@@ -117,6 +119,13 @@ class CareButton:
                         self.section, self.message, self.category)
         except Exception as e:
             logger.exception("%s logging failed: %s", self.section, e)
+        # Flash a confirmation on the OLED. Separate try so a display failure
+        # doesn't mask a successful log entry.
+        if self.display:
+            try:
+                self.display.flash(self.category, self.message)
+            except Exception as e:
+                logger.warning("%s flash failed: %s", self.section, e)
 
     def stop(self):
         self._running = False
