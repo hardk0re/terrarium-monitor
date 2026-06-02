@@ -341,9 +341,13 @@ your router is not.
 
 *Built with way too much enthusiasm for a gecko that probably doesn't care.*
 
+LCD Screen:
+<img width="429" height="456" alt="image" src="https://github.com/user-attachments/assets/99f5f539-55a7-4309-8ab4-bcee95bf8aa7" />
+
+
 Main Website:
-<img width="1424" height="999" alt="image" src="https://github.com/user-attachments/assets/fcfbd002-577e-41e7-894e-7978cc61e8a8" />
-<img width="1443" height="722" alt="image" src="https://github.com/user-attachments/assets/a5a05bbc-cbbd-46b7-aec5-7238c09dfaa0" />
+<img width="1411" height="1004" alt="image" src="https://github.com/user-attachments/assets/451b2bb9-7731-497f-988b-08cc1bf47987" />
+<img width="1420" height="653" alt="image" src="https://github.com/user-attachments/assets/df0703fc-5c58-4ab6-9b3f-9acd351674c8" />
 
 
 Configuration Editor:
