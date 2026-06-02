@@ -314,16 +314,7 @@ i2c_bus = 3
 built for. Family members poking buttons is fine — exposing port 8080 on
 your router is not.
 
-**If you genuinely need to reach it while away from home**, use one of these
-instead of port-forwarding:
-
-- **[Tailscale](https://tailscale.com/)** (recommended) — install on your Pi and your phone/laptop;
-  the dashboard becomes reachable at the Pi's Tailscale IP from any of your
-  enrolled devices, with no public exposure. Setup is ~10 minutes.
-- **[Cloudflare Tunnel](https://www.cloudflare.com/products/tunnel/) with Access policy** — gives you a real hostname
-  with Cloudflare's auth in front, never opens a router port.
-- **SSH tunnel** — quick and dirty: `ssh -L 8080:localhost:8080 pi@home`,
-  then visit `http://localhost:8080` in your browser.
+**If you genuinely need to reach it while away from home**, use a VPN
 
 **Even on your LAN**, a few cheap hardening steps are worth doing:
 
