@@ -342,6 +342,7 @@ your router is not.
 *Built with way too much enthusiasm for a gecko that probably doesn't care.*
 
 LCD Screen:
+
 <img width="429" height="456" alt="image" src="https://github.com/user-attachments/assets/99f5f539-55a7-4309-8ab4-bcee95bf8aa7" />
 
 
