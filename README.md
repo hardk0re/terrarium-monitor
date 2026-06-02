@@ -337,6 +337,12 @@ your router is not.
 - All data is stored locally in SQLite — nothing leaves your network
 - Timelapse frames accumulate quickly; set `timelapse_retention_days` and `timelapse_interval_seconds` appropriately
 
+## Restrospec
+- I am not using features I thought I needed (currently).  Such as Mister or Fan, as a result I have disconnected the relay's as they were not required.  Leaving it here as it is an option.
+- I am not entirely happy with the LCD enclosure, and sensor enclosures.  But they work.  I used Crazy Glue to hold parts in place such as buttons and the sensor top/bottom.
+- External weather is something I thought interesting to log, not sure yet how much I will value this data.
+- Originally all my sensors , LCD are connected with project pins/wires.  I found that USB-C connectors are cheap, support up to 16 pins, so I am going to build a new setup with USB-C connectors (confusing for some but this way if you need longer cables...just buy a new USB-C cable)
+
 ---
 
 *Built with way too much enthusiasm for a gecko that probably doesn't care.*
