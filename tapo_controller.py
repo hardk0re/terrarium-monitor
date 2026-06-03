@@ -187,9 +187,6 @@ class TapoPlug:
 
         temp_thresh = config.getfloat("fan", "temp_threshold_high",     fallback=30.0)
         hum_thresh  = config.getfloat("fan", "humidity_threshold_high", fallback=80.0)
-        # Hysteresis: once the plug is on for humidity, stay on until humidity
-        # drops below humidity_threshold_low. Defaults to hum_thresh (no hysteresis).
-        hum_low     = config.getfloat("fan", "humidity_threshold_low",  fallback=hum_thresh)
         # Temp threshold is in whichever unit [fan].temp_unit (or [display]) uses.
         fan_unit = config.get("fan", "temp_unit", fallback="").strip().upper()
         if fan_unit not in ("F", "C"):
@@ -202,9 +199,7 @@ class TapoPlug:
                 return True
         if hums:
             avg_h = sum(hums) / len(hums)
-            # Pick the threshold based on whether we're already running
-            active_thresh = hum_low if self._state else hum_thresh
-            if avg_h > active_thresh:
+            if avg_h > hum_thresh:
                 return True
         return False
 
@@ -220,10 +215,6 @@ class LightingController:
         self._dl      = data_logger
         self.config   = config
         self._latest_readings: list[dict] = []   # set by main loop via update_readings()
-
-        if not config.getboolean("lighting", "enabled", fallback=True):
-            logger.info("Lighting control disabled.")
-            return
 
         for section in config.sections():
             if not section.lower().startswith("tapo_plug_"):

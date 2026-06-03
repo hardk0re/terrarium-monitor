@@ -231,7 +231,7 @@ CONFIG_HTML = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<h1>⚙️ Configuration Editor</h1>
+<h1>⚙️ Configuration Editor <span style="font-size:.65rem;color:var(--grey);font-weight:400;margin-left:.4rem">v{{ app_version }}</span></h1>
 <div class="nav">
   <a href="/">← Dashboard</a>
   <a href="/config-logout">Logout</a>
@@ -380,11 +380,13 @@ def config_page():
 
     sections     = _read_config_with_comments()
     auth_enabled = _auth_enabled()
+    from version import __version__ as app_version
     return render_template_string(CONFIG_HTML,
                                   sections=sections,
                                   message=message,
                                   message_ok=message_ok,
-                                  auth_enabled=auth_enabled)
+                                  auth_enabled=auth_enabled,
+                                  app_version=app_version)
 
 
 # ------------------------------------------------------------------
@@ -428,7 +430,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </head>
 <body>
 <div class="topbar">
-  <h1>🦎 {{ site_title }}</h1>
+  <h1>🦎 {{ site_title }} <span style="font-size:.65rem;color:var(--grey);font-weight:400;margin-left:.4rem">v{{ app_version }}</span></h1>
   <div class="topbar-btns">
     <a href="/logs"><button class="cfg-btn" style="background:#444">📋 Logs</button></a>
     <a href="/config"><button class="cfg-btn">⚙️ Config</button></a>
@@ -1049,10 +1051,12 @@ setInterval(()=>{
 @_auth_required
 def index():
     from flask import render_template_string
+    from version import __version__ as app_version
     title = _config.get("web", "site_title", fallback="Terrarium Monitor") if _config else "Terrarium Monitor"
     return render_template_string(DASHBOARD_HTML,
                                   auth_enabled=_auth_enabled(),
-                                  site_title=title)
+                                  site_title=title,
+                                  app_version=app_version)
 
 
 # ------------------------------------------------------------------

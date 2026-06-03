@@ -289,33 +289,19 @@ def main():
                 t_low  = cfg.getfloat("fan", "temp_threshold_low",
                                       fallback=65.0 if fan_unit == "F" else 18.0)
                 h_high = cfg.getfloat("fan", "humidity_threshold_high", fallback=80.0)
-                # humidity_threshold_low is the hysteresis "off" point: once the
-                # fan is on for humidity, it keeps running until humidity drops
-                # below this value. If not set, defaults to h_high (no hysteresis).
-                h_low_hum = cfg.getfloat("fan", "humidity_threshold_low", fallback=h_high)
                 runtime_min = cfg.getfloat("fan", "fan_runtime_minutes", fallback=10.0)
 
-                # Three independent trigger conditions. Humidity uses hysteresis:
-                # when the fan is already running, "still too humid" stays true
-                # until humidity drops below h_low_hum (rather than h_high).
-                too_hot  = avg_t > t_high
-                too_cold = avg_t < t_low
-                if avg_hum is None:
-                    too_humid = False
-                elif fan.is_on:
-                    too_humid = avg_hum > h_low_hum
-                else:
-                    too_humid = avg_hum > h_high
-                wants_on = too_hot or too_cold or too_humid
+                # Three independent trigger conditions
+                too_hot   = avg_t > t_high
+                too_cold  = avg_t < t_low
+                too_humid = avg_hum is not None and avg_hum > h_high
+                wants_on  = too_hot or too_cold or too_humid
 
                 if wants_on:
                     reasons = []
                     if too_hot:   reasons.append(f"temp {avg_t:.1f}{unit_lbl} > {t_high}{unit_lbl}")
                     if too_cold:  reasons.append(f"temp {avg_t:.1f}{unit_lbl} < {t_low}{unit_lbl}")
-                    if too_humid:
-                        # Use the threshold we actually checked against
-                        active_h = h_low_hum if fan.is_on else h_high
-                        reasons.append(f"humidity {avg_hum:.1f}% > {active_h}%")
+                    if too_humid: reasons.append(f"humidity {avg_hum:.1f}% > {h_high}%")
                     reason_str = "; ".join(reasons)
 
                 if runtime_min <= 0:
