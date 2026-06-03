@@ -91,10 +91,30 @@ def reload_subsystems(current: dict, cfg: configparser.ConfigParser) -> dict:
     return new
 
 
+# ── logging helpers ───────────────────────────────────────────────────
+
+def _apply_log_level(cfg: configparser.ConfigParser):
+    """Read [general].log_level and apply it to the root logger.
+    Werkzeug stays at INFO no matter what — its DEBUG mode is mostly
+    HTTP-handshake noise that isn't useful when chasing a terrarium issue."""
+    level_str = cfg.get("general", "log_level", fallback="INFO").strip().upper()
+    level = getattr(logging, level_str, None)
+    if not isinstance(level, int):
+        logger.warning("Unknown log_level %r, falling back to INFO.", level_str)
+        level = logging.INFO
+    logging.getLogger().setLevel(level)
+    logging.getLogger("werkzeug").setLevel(logging.INFO)
+    if level == logging.DEBUG:
+        logger.info("Debug logging enabled (log file will grow faster).")
+    else:
+        logger.info("Log level: %s.", logging.getLevelName(level))
+
+
 # ── entry point ───────────────────────────────────────────────────────
 
 def main():
     cfg  = load_config()
+    _apply_log_level(cfg)
     subs = build_subsystems(cfg)
     dl, sensors, mister, fan, lighting, camera, weather = (
         subs["dl"], subs["sensors"], subs["mister"],
@@ -171,6 +191,7 @@ def main():
             if _reload.is_set():
                 _reload.clear()
                 cfg.read(CONFIG_PATH)
+                _apply_log_level(cfg)
                 subs = reload_subsystems(subs, cfg)
                 dl, sensors, mister, fan, lighting, camera, weather = (
                     subs["dl"], subs["sensors"], subs["mister"],
