@@ -333,7 +333,7 @@ your router is not.
 ## Notes
 
 - The TAPO camera requires ONVIF to be enabled in the Tapo app under **Advanced Settings → ONVIF**
-- Smart plugs on firmware ≥ 1.2.x may require credentials — update `tapo_controller.py` accordingly
+- Smart plugs on newer firmware may reject unauthenticated local control by default. In the Kasa app, open each device → **Advanced Settings → Third-party compatibility** (sometimes called *Allow third party control*) and enable it. With that toggle on, `PyP100`'s empty-credential path works again on the LAN.
 - The web config editor saves immediately but some changes (GPIO pins, I²C addresses, web port) require a restart to take effect
 - All data is stored locally in SQLite — nothing leaves your network
 - Timelapse frames accumulate quickly; set `timelapse_retention_days` and `timelapse_interval_seconds` appropriately

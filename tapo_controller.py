@@ -79,11 +79,18 @@ def _raw_send(ip: str, payload: dict, port: int = 9999, timeout: float = 3.0) ->
 
 class TapoPlug:
     def __init__(self, name: str, ip: str, on_time: dtime, off_time: dtime,
-                 data_logger=None):
+                 mode: str = "light", data_logger=None):
         self.name       = name
         self.ip         = ip
         self.on_time    = on_time
         self.off_time   = off_time
+        # mode: "light" = scheduled on/off; "fan" = on within the window only
+        # when avg temp or humidity exceeds thresholds in [fan].
+        self.mode       = (mode or "light").lower().strip()
+        if self.mode not in ("light", "fan"):
+            logger.warning("Unknown plug mode '%s' for %s — defaulting to 'light'.",
+                           mode, name)
+            self.mode = "light"
         self.data_logger = data_logger
         self._state     = None   # True = on, False = off, None = unknown
 
@@ -148,14 +155,58 @@ class TapoPlug:
     def current_state(self) -> bool | None:
         return self._state
 
-    def should_be_on(self, now: dtime | None = None) -> bool:
-        """Returns True if current time falls within the on/off schedule."""
+    def should_be_on(self, now: dtime | None = None,
+                     readings: list | None = None,
+                     config=None) -> bool:
+        """Returns True if the plug should currently be on.
+
+        For mode='light': within the on/off window.
+        For mode='fan' : within the window AND avg temp or humidity exceeds
+                         thresholds from [fan] (temp_threshold_high,
+                         humidity_threshold_high). Humidity uses hysteresis
+                         (humidity_threshold_low) when already running.
+        """
         now = now or datetime.now().time().replace(second=0, microsecond=0)
         if self.on_time <= self.off_time:
-            return self.on_time <= now < self.off_time
+            in_window = self.on_time <= now < self.off_time
         else:
-            # Overnight schedule e.g. 22:00 → 06:00
-            return now >= self.on_time or now < self.off_time
+            in_window = now >= self.on_time or now < self.off_time
+
+        if not in_window:
+            return False
+        if self.mode == "light":
+            return True
+
+        # mode == "fan" — need readings + config to evaluate
+        if not readings or config is None:
+            return False
+        temps_c = [r["temp_c"]  for r in readings if r.get("temp_c")  is not None]
+        hums    = [r["humidity"] for r in readings if r.get("humidity") is not None]
+        if not temps_c and not hums:
+            return False
+
+        temp_thresh = config.getfloat("fan", "temp_threshold_high",     fallback=30.0)
+        hum_thresh  = config.getfloat("fan", "humidity_threshold_high", fallback=80.0)
+        # Hysteresis: once the plug is on for humidity, stay on until humidity
+        # drops below humidity_threshold_low. Defaults to hum_thresh (no hysteresis).
+        hum_low     = config.getfloat("fan", "humidity_threshold_low",  fallback=hum_thresh)
+        # Temp threshold is in whichever unit [fan].temp_unit (or [display]) uses.
+        fan_unit = config.get("fan", "temp_unit", fallback="").strip().upper()
+        if fan_unit not in ("F", "C"):
+            fan_unit = config.get("display", "temp_unit", fallback="F").upper()
+
+        if temps_c:
+            avg_tc = sum(temps_c) / len(temps_c)
+            avg_t  = avg_tc * 9 / 5 + 32 if fan_unit == "F" else avg_tc
+            if avg_t > temp_thresh:
+                return True
+        if hums:
+            avg_h = sum(hums) / len(hums)
+            # Pick the threshold based on whether we're already running
+            active_thresh = hum_low if self._state else hum_thresh
+            if avg_h > active_thresh:
+                return True
+        return False
 
 
 # ======================================================================
@@ -167,6 +218,8 @@ class LightingController:
         self.plugs: list[TapoPlug] = []
         self._running = False
         self._dl      = data_logger
+        self.config   = config
+        self._latest_readings: list[dict] = []   # set by main loop via update_readings()
 
         if not config.getboolean("lighting", "enabled", fallback=True):
             logger.info("Lighting control disabled.")
@@ -186,13 +239,28 @@ class LightingController:
                     ip          = cfg["ip_address"],
                     on_time     = dtime(on_h, on_m),
                     off_time    = dtime(off_h, off_m),
+                    mode        = cfg.get("mode", fallback="light"),
                     data_logger = self._dl,
                 )
                 self.plugs.append(plug)
-                logger.info("Lighting plug '%s' at %s  ON:%02d:%02d  OFF:%02d:%02d",
-                            plug.name, plug.ip, on_h, on_m, off_h, off_m)
+                logger.info("Plug '%s' at %s  mode=%s  window=%02d:%02d→%02d:%02d",
+                            plug.name, plug.ip, plug.mode,
+                            on_h, on_m, off_h, off_m)
             except Exception as e:
                 logger.error("Failed to configure plug [%s]: %s", section, e)
+
+    def update_readings(self, readings):
+        """Push the latest sensor readings into the controller so fan-mode
+        plugs can evaluate their thresholds. Accepts SensorReading objects
+        (anything with .temperature_c / .humidity) or plain dicts."""
+        out = []
+        for r in readings or []:
+            if hasattr(r, "temperature_c"):
+                out.append({"temp_c": r.temperature_c, "humidity": r.humidity})
+            elif isinstance(r, dict):
+                out.append({"temp_c":   r.get("temp_c"),
+                            "humidity": r.get("humidity")})
+        self._latest_readings = out
 
     def start_schedule_loop(self):
         """Start a background thread that checks schedule every 60 s."""
@@ -212,7 +280,8 @@ class LightingController:
     def _tick(self):
         now = datetime.now().time().replace(second=0, microsecond=0)
         for plug in self.plugs:
-            desired = plug.should_be_on(now)
+            desired = plug.should_be_on(now, readings=self._latest_readings,
+                                        config=self.config)
             if desired and plug.current_state is not True:
                 plug.turn_on()
             elif not desired and plug.current_state is not False:
@@ -227,10 +296,12 @@ class LightingController:
             {
                 "name": p.name,
                 "ip": p.ip,
+                "mode": p.mode,
                 "on_time": p.on_time.strftime("%H:%M"),
                 "off_time": p.off_time.strftime("%H:%M"),
                 "state": p.current_state,
-                "should_be_on": p.should_be_on(),
+                "should_be_on": p.should_be_on(readings=self._latest_readings,
+                                                config=self.config),
             }
             for p in self.plugs
         ]

@@ -79,9 +79,15 @@ class RelayController:
 
     def trigger(self, reason: str = "") -> bool:
         """
-        Attempt to start a relay cycle in a background thread.
-        Returns True if the cycle was started, False if blocked.
+        Attempt to start a relay cycle.
+        - runtime_minutes > 0: timed cycle, then cooldown, capped at max_runs_per_24h.
+        - runtime_minutes <= 0: continuous mode — turn on and leave on. The
+          caller is responsible for calling force_off() when conditions clear.
+          The 24h run cap is skipped in continuous mode since there are no
+          discrete "runs" to count.
+        Returns True if the relay was turned on, False if blocked.
         """
+        continuous = self.runtime_minutes <= 0
         with self._lock:
             if self._is_on:
                 logger.debug("%s already running.", self.name)
@@ -92,7 +98,7 @@ class RelayController:
                 logger.info("%s in cooldown – %.1f min remaining.", self.name, remaining / 60)
                 return False
 
-            if self.max_runs_per_24h > 0:
+            if not continuous and self.max_runs_per_24h > 0:
                 runs = self._run_count_24h()
                 if runs >= self.max_runs_per_24h:
                     logger.warning("%s hit 24h run cap (%d/%d).",
@@ -103,11 +109,12 @@ class RelayController:
             self._write(True)
             if self.data_logger:
                 self.data_logger.log_relay_event(self.name, "ON", reason)
-            logger.info("%s ON – runtime %.1f min | reason: %s",
-                        self.name, self.runtime_minutes, reason)
+            mode_label = "continuous" if continuous else f"runtime {self.runtime_minutes:.1f} min"
+            logger.info("%s ON – %s | reason: %s", self.name, mode_label, reason)
 
-        t = threading.Thread(target=self._auto_off, daemon=True)
-        t.start()
+        if not continuous:
+            t = threading.Thread(target=self._auto_off, daemon=True)
+            t.start()
         return True
 
     def force_off(self):
