@@ -100,3 +100,25 @@ class SensorManager:
     def average_humidity(self, readings: list[SensorReading]) -> float | None:
         hums = [r.humidity for r in readings]
         return sum(hums) / len(hums) if hums else None
+
+    def temperature_for(self, readings: list[SensorReading],
+                        sensor_name: str = "") -> float | None:
+        """Return the temperature (°C) from the named sensor, or the average
+        of all sensors if sensor_name is blank. Returns None if the named
+        sensor isn't in the current readings (e.g. it failed this poll)."""
+        if sensor_name:
+            for r in readings:
+                if r.name.lower() == sensor_name.lower():
+                    return r.temperature_c
+            return None
+        return self.average_temperature(readings)
+
+    def humidity_for(self, readings: list[SensorReading],
+                     sensor_name: str = "") -> float | None:
+        """Same as temperature_for but for humidity (%)."""
+        if sensor_name:
+            for r in readings:
+                if r.name.lower() == sensor_name.lower():
+                    return r.humidity
+            return None
+        return self.average_humidity(readings)

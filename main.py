@@ -264,60 +264,70 @@ def main():
             except Exception as e:
                 logger.warning("Mood check failed: %s", e)
 
-            avg_hum  = sensors.average_humidity(readings)
-            avg_temp = sensors.average_temperature(readings)
+            # Mister — pick its sensor (blank = average of all enabled sensors)
+            if mister:
+                m_sensor = cfg.get("mister", "sensor", fallback="").strip()
+                m_hum    = sensors.humidity_for(readings, m_sensor)
+                if m_hum is not None:
+                    threshold = cfg.getfloat("mister", "humidity_threshold_low", fallback=50.0)
+                    if m_hum < threshold and not mister.is_on and not mister.in_cooldown:
+                        src = m_sensor or "avg"
+                        logger.info("Humidity %.1f%% (%s) < %.1f%% – triggering mister.",
+                                    m_hum, src, threshold)
+                        mister.trigger(
+                            reason=f"humidity {m_hum:.1f}% (from {src}) < {threshold}%"
+                        )
 
-            if mister and avg_hum is not None:
-                threshold = cfg.getfloat("mister", "humidity_threshold_low", fallback=50.0)
-                if avg_hum < threshold and not mister.is_on and not mister.in_cooldown:
-                    logger.info("Humidity %.1f%% < %.1f%% – triggering mister.",
-                                avg_hum, threshold)
-                    mister.trigger(reason=f"humidity {avg_hum:.1f}% < {threshold}%")
+            # Fan — pick its sensor (blank = average of all enabled sensors).
+            # Same sensor drives both the temp and humidity checks below.
+            if fan:
+                f_sensor = cfg.get("fan", "sensor", fallback="").strip()
+                f_temp_c = sensors.temperature_for(readings, f_sensor)
+                f_hum    = sensors.humidity_for(readings, f_sensor)
+                if f_temp_c is not None:
+                    src = f_sensor or "avg"
+                    # Unit the fan thresholds are written in. [fan].temp_unit
+                    # overrides, else fall back to [display].temp_unit.
+                    fan_unit = cfg.get("fan", "temp_unit", fallback="").strip().upper()
+                    if fan_unit not in ("F", "C"):
+                        fan_unit = cfg.get("display", "temp_unit", fallback="F").upper()
+                    f_t = f_temp_c * 9 / 5 + 32 if fan_unit == "F" else f_temp_c
+                    unit_lbl = "°F" if fan_unit == "F" else "°C"
+                    # Defaults track the unit: ~85/65 °F vs 30/18 °C.
+                    t_high = cfg.getfloat("fan", "temp_threshold_high",
+                                          fallback=85.0 if fan_unit == "F" else 30.0)
+                    t_low  = cfg.getfloat("fan", "temp_threshold_low",
+                                          fallback=65.0 if fan_unit == "F" else 18.0)
+                    h_high = cfg.getfloat("fan", "humidity_threshold_high", fallback=80.0)
+                    runtime_min = cfg.getfloat("fan", "fan_runtime_minutes", fallback=10.0)
 
-            if fan and avg_temp is not None:
-                # Unit the fan thresholds are written in. [fan].temp_unit
-                # overrides, else fall back to [display].temp_unit. avg_temp
-                # is always Celsius from the sensor; convert to comparison unit.
-                fan_unit = cfg.get("fan", "temp_unit", fallback="").strip().upper()
-                if fan_unit not in ("F", "C"):
-                    fan_unit = cfg.get("display", "temp_unit", fallback="F").upper()
-                avg_t = avg_temp * 9 / 5 + 32 if fan_unit == "F" else avg_temp
-                unit_lbl = "°F" if fan_unit == "F" else "°C"
-                # Defaults track the unit: ~85/65 °F vs 30/18 °C.
-                t_high = cfg.getfloat("fan", "temp_threshold_high",
-                                      fallback=85.0 if fan_unit == "F" else 30.0)
-                t_low  = cfg.getfloat("fan", "temp_threshold_low",
-                                      fallback=65.0 if fan_unit == "F" else 18.0)
-                h_high = cfg.getfloat("fan", "humidity_threshold_high", fallback=80.0)
-                runtime_min = cfg.getfloat("fan", "fan_runtime_minutes", fallback=10.0)
+                    # Three independent trigger conditions
+                    too_hot   = f_t > t_high
+                    too_cold  = f_t < t_low
+                    too_humid = f_hum is not None and f_hum > h_high
+                    wants_on  = too_hot or too_cold or too_humid
 
-                # Three independent trigger conditions
-                too_hot   = avg_t > t_high
-                too_cold  = avg_t < t_low
-                too_humid = avg_hum is not None and avg_hum > h_high
-                wants_on  = too_hot or too_cold or too_humid
+                    if wants_on:
+                        reasons = []
+                        if too_hot:   reasons.append(f"temp {f_t:.1f}{unit_lbl} ({src}) > {t_high}{unit_lbl}")
+                        if too_cold:  reasons.append(f"temp {f_t:.1f}{unit_lbl} ({src}) < {t_low}{unit_lbl}")
+                        if too_humid: reasons.append(f"humidity {f_hum:.1f}% ({src}) > {h_high}%")
+                        reason_str = "; ".join(reasons)
 
-                if wants_on:
-                    reasons = []
-                    if too_hot:   reasons.append(f"temp {avg_t:.1f}{unit_lbl} > {t_high}{unit_lbl}")
-                    if too_cold:  reasons.append(f"temp {avg_t:.1f}{unit_lbl} < {t_low}{unit_lbl}")
-                    if too_humid: reasons.append(f"humidity {avg_hum:.1f}% > {h_high}%")
-                    reason_str = "; ".join(reasons)
-
-                if runtime_min <= 0:
-                    # Continuous mode — match relay state to conditions every poll.
-                    if wants_on and not fan.is_on:
-                        logger.info("Fan ON (continuous) – %s", reason_str)
-                        fan.trigger(reason=reason_str)
-                    elif not wants_on and fan.is_on:
-                        logger.info("Fan OFF (continuous) – conditions cleared.")
-                        fan.force_off()
-                else:
-                    # Timed mode — kick off a fixed-length cycle, then cooldown.
-                    if wants_on and not fan.is_on and not fan.in_cooldown:
-                        logger.info("Fan ON (timed %.1f min) – %s",
-                                    runtime_min, reason_str)
-                        fan.trigger(reason=reason_str)
+                    if runtime_min <= 0:
+                        # Continuous mode — match relay state to conditions every poll.
+                        if wants_on and not fan.is_on:
+                            logger.info("Fan ON (continuous) – %s", reason_str)
+                            fan.trigger(reason=reason_str)
+                        elif not wants_on and fan.is_on:
+                            logger.info("Fan OFF (continuous) – conditions cleared.")
+                            fan.force_off()
+                    else:
+                        # Timed mode — kick off a fixed-length cycle, then cooldown.
+                        if wants_on and not fan.is_on and not fan.in_cooldown:
+                            logger.info("Fan ON (timed %.1f min) – %s",
+                                        runtime_min, reason_str)
+                            fan.trigger(reason=reason_str)
 
             # Sleep in small chunks so stop/reload events respond quickly
             for _ in range(poll_sec * 2):

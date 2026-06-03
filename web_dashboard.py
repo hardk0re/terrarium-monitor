@@ -1087,6 +1087,33 @@ def api_status():
             "ts_local": _utc_to_local(row["ts"]),
         })
 
+    # Optional synthetic "Average" card (controlled by [web].show_average_card).
+    # Inserted at the front so it sits before the individual sensor cards.
+    show_avg = (_config.getboolean("web", "show_average_card", fallback=False)
+                if _config else False)
+    if show_avg and len(sensors_out) >= 2:
+        avg_tc = sum(s["temp_c"]   for s in sensors_out) / len(sensors_out)
+        avg_h  = sum(s["humidity"] for s in sensors_out) / len(sensors_out)
+        avg_td = avg_tc * 9 / 5 + 32 if temp_unit == "F" else avg_tc
+        # Match colour cue to the [fan] thresholds, same as individual cards.
+        try:
+            hi = _config.getfloat("fan", "temp_threshold_high", fallback=30)
+            lo = _config.getfloat("fan", "temp_threshold_low",  fallback=20)
+            avg_cls = "hot" if avg_tc > hi else ("cold" if avg_tc < lo else "ok")
+        except Exception:
+            avg_cls = "ok"
+        # Use the newest individual reading's timestamp for the "as of" line.
+        newest_ts = max((s["ts_local"] for s in sensors_out), default="")
+        sensors_out.insert(0, {
+            "name": "Average",
+            "temp_c": avg_tc,
+            "temp_display_val": round(avg_td, 1),
+            "temp_display": f"{avg_td:.1f}{unit}",
+            "humidity": avg_h,
+            "temp_class": avg_cls,
+            "ts_local": newest_ts,
+        })
+
     relays_out = []
     for relay in [_mister, _fan]:
         if relay:
