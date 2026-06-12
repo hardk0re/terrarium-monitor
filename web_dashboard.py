@@ -426,6 +426,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   button.stop-btn{background:#ff3030;color:#fff}
   #chart-wrap{background:var(--card);border-radius:12px;padding:1rem;margin-bottom:1rem}
   canvas{width:100%!important;max-height:220px}
+  .chart-head{display:flex;justify-content:space-between;align-items:center;
+              gap:.5rem;flex-wrap:wrap;margin-bottom:.4rem}
+  .range-pill{background:#1a1a2a;color:var(--grey);border:1px solid #22224a;
+              border-radius:99px;padding:.15rem .65rem;font-size:.7rem;
+              cursor:pointer;font-family:inherit;letter-spacing:.03em}
+  .range-pill:hover{border-color:var(--accent);color:var(--text)}
+  .range-pill.active{background:var(--accent);color:#000;
+                     border-color:var(--accent);font-weight:600}
 </style>
 </head>
 <body>
@@ -468,14 +476,32 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <div id="weather-wrap" style="display:none;margin-bottom:1.5rem">
   <div class="grid" id="weather-cards"></div>
   <div id="weather-chart-wrap" style="background:var(--card);border-radius:12px;padding:1rem;margin-top:.5rem">
-    <div class="section-title">Outdoor Temp &amp; Humidity (last 24h)</div>
+    <div class="chart-head">
+      <div class="section-title" style="margin:0">
+        <span id="weather-chart-title">Outdoor Temp &amp; Humidity (last 24h)</span>
+      </div>
+      <div>
+        <button class="range-pill active" data-w-hours="24" onclick="setWeatherChartHours(24)">24H</button>
+        <button class="range-pill"        data-w-hours="48" onclick="setWeatherChartHours(48)">48H</button>
+        <button class="range-pill"        data-w-hours="96" onclick="setWeatherChartHours(96)">96H</button>
+      </div>
+    </div>
     <canvas id="weather-chart"></canvas>
   </div>
 </div>
 <div class="section-title">Relays &amp; Lights</div>
 <div id="relays" class="grid"></div>
 <div id="chart-wrap">
-  <div class="section-title">Temperature &amp; Humidity (last 24 h)</div>
+  <div class="chart-head">
+    <div class="section-title" style="margin:0">
+      <span id="chart-title">Temperature &amp; Humidity (last 24h)</span>
+    </div>
+    <div>
+      <button class="range-pill active" data-hours="24"  onclick="setChartHours(24)">24H</button>
+      <button class="range-pill"        data-hours="48"  onclick="setChartHours(48)">48H</button>
+      <button class="range-pill"        data-hours="96"  onclick="setChartHours(96)">96H</button>
+    </div>
+  </div>
   <canvas id="chart"></canvas>
 </div>
 
@@ -752,9 +778,20 @@ async function loadTimelapseCard(standalone){
   } catch(e){ console.error('loadTimelapseCard error:', e); }
 }
 
+let weatherChartHours = 24;
+function setWeatherChartHours(h){
+  weatherChartHours = h;
+  document.querySelectorAll('.range-pill[data-w-hours]').forEach(b=>{
+    b.classList.toggle('active', parseInt(b.dataset.wHours) === h);
+  });
+  const t = document.getElementById('weather-chart-title');
+  if(t) t.textContent = `Outdoor Temp & Humidity (last ${h}h)`;
+  loadWeatherChart();
+}
+
 async function loadWeatherChart(){
   try {
-    const r = await fetch('/api/weather/history?hours=24');
+    const r = await fetch(`/api/weather/history?hours=${weatherChartHours}`);
     const rows = await r.json();
     if(!rows.length) return;
     const labels = rows.map(r=>r.ts_local);
@@ -984,8 +1021,19 @@ function movingAverage(data, window){
   return out;
 }
 
+let chartHours = 24;
+function setChartHours(h){
+  chartHours = h;
+  document.querySelectorAll('.range-pill[data-hours]').forEach(b=>{
+    b.classList.toggle('active', parseInt(b.dataset.hours) === h);
+  });
+  const t = document.getElementById('chart-title');
+  if(t) t.textContent = `Temperature & Humidity (last ${h}h)`;
+  loadChart();
+}
+
 async function loadChart(){
-  const r=await fetch('/api/history?hours=24');
+  const r=await fetch(`/api/history?hours=${chartHours}`);
   const rows=await r.json();
   const sensors={};
   rows.forEach(row=>{
