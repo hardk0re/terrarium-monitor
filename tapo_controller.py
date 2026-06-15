@@ -93,6 +93,7 @@ class TapoPlug:
             self.mode = "light"
         self.data_logger = data_logger
         self._state     = None   # True = on, False = off, None = unknown
+        self.last_reason = ""    # set by should_be_on; logged on state change
 
         if _USE_PYP100:
             try:
@@ -173,16 +174,20 @@ class TapoPlug:
             in_window = now >= self.on_time or now < self.off_time
 
         if not in_window:
+            self.last_reason = "outside on/off window"
             return False
         if self.mode == "light":
+            self.last_reason = "in window (light mode)"
             return True
 
         # mode == "fan" — need readings + config to evaluate
         if not readings or config is None:
+            self.last_reason = "fan mode: no sensor readings yet"
             return False
         temps_c = [r["temp_c"]  for r in readings if r.get("temp_c")  is not None]
         hums    = [r["humidity"] for r in readings if r.get("humidity") is not None]
         if not temps_c and not hums:
+            self.last_reason = "fan mode: no usable readings this poll"
             return False
 
         temp_thresh = config.getfloat("fan", "temp_threshold_high",     fallback=30.0)
@@ -192,15 +197,34 @@ class TapoPlug:
         if fan_unit not in ("F", "C"):
             fan_unit = config.get("display", "temp_unit", fallback="F").upper()
 
+        avg_t = None
+        avg_h = None
         if temps_c:
             avg_tc = sum(temps_c) / len(temps_c)
             avg_t  = avg_tc * 9 / 5 + 32 if fan_unit == "F" else avg_tc
-            if avg_t > temp_thresh:
-                return True
         if hums:
             avg_h = sum(hums) / len(hums)
-            if avg_h > hum_thresh:
-                return True
+
+        # Trigger on either condition; record which sample(s) actually crossed.
+        if avg_t is not None and avg_t > temp_thresh:
+            n = len(temps_c)
+            self.last_reason = (f"avg temp {avg_t:.2f}°{fan_unit} > "
+                                f"{temp_thresh}°{fan_unit} (n={n} sensors)")
+            return True
+        if avg_h is not None and avg_h > hum_thresh:
+            n = len(hums)
+            self.last_reason = (f"avg humidity {avg_h:.2f}% > {hum_thresh}% "
+                                f"(n={n} sensors)")
+            return True
+
+        # All conditions clear — show the actual values so we can see how close
+        # we are to the threshold in the log.
+        parts = []
+        if avg_t is not None:
+            parts.append(f"temp {avg_t:.2f}°{fan_unit} ≤ {temp_thresh}°{fan_unit}")
+        if avg_h is not None:
+            parts.append(f"humidity {avg_h:.2f}% ≤ {hum_thresh}%")
+        self.last_reason = "clear: " + "; ".join(parts) if parts else "no readings"
         return False
 
 
@@ -274,8 +298,10 @@ class LightingController:
             desired = plug.should_be_on(now, readings=self._latest_readings,
                                         config=self.config)
             if desired and plug.current_state is not True:
+                logger.info("Plug '%s' → ON  | %s", plug.name, plug.last_reason)
                 plug.turn_on()
             elif not desired and plug.current_state is not False:
+                logger.info("Plug '%s' → OFF | %s", plug.name, plug.last_reason)
                 plug.turn_off()
 
     def force_all_off(self):

@@ -236,6 +236,10 @@ class DisplayManager:
 
     def _load_config_values(self):
         c = self.cfg
+        # Pull from [web].site_title so the OLED header matches the dashboard.
+        # Note: read off self.config (not c = self.cfg, which is [display]).
+        self.site_name      = self.config.get("web", "site_title",
+                                              fallback="Terrarium Monitor")
         self.temp_unit      = c.get("temp_unit", "F").upper()
         self.page_cycle_sec = c.getfloat("page_cycle_seconds", fallback=5)
         self.brightness_day   = c.getint("brightness",       fallback=80)
@@ -421,7 +425,7 @@ class DisplayManager:
         img, d = self._new_canvas()
 
         d.rectangle([(0, 0), (W, 34)], fill=self.col_accent)
-        d.text((8, 7),    "Terrarium Monitor",              font=self._fnt_small, fill=self.col_bg)
+        d.text((8, 7), self.site_name,              font=self._fnt_small, fill=self.col_bg)
         d.text((W-58, 7), datetime.now().strftime("%H:%M"), font=self._fnt_small, fill=self.col_bg)
 
         rows = []
