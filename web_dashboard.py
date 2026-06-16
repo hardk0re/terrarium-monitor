@@ -664,7 +664,7 @@ async function loadGecko(){
     }).join('');
     wrap.innerHTML = `
       <div class="card" style="background:${p.bg};border:1px solid ${p.color}33">
-        <h3>🦎 Gecko Mood</h3>
+        <h3>🦎 {{ pet_name }}'s Mood</h3>
         <div style="color:${p.color}">${geckoSvg(d.mood)}</div>
         <div style="text-align:center;color:${p.color};font-weight:700;
                     font-size:1.1rem;margin-top:.2rem">${p.label}</div>
@@ -1101,10 +1101,12 @@ def index():
     from flask import render_template_string
     from version import __version__ as app_version
     title = _config.get("web", "site_title", fallback="Terrarium Monitor") if _config else "Terrarium Monitor"
+    pet_name = _config.get("web", "pet_name", fallback="Terrarium Monitor") if _config else "Terrarium Monitor"
     return render_template_string(DASHBOARD_HTML,
                                   auth_enabled=_auth_enabled(),
                                   site_title=title,
-                                  app_version=app_version)
+                                  app_version=app_version,
+                                  pet_name=pet_name)
 
 
 # ------------------------------------------------------------------

@@ -21,7 +21,6 @@ from datetime import datetime
 def compute_mood(config, data_logger) -> dict:
     if not config or not config.getboolean("gecko", "enabled", fallback=True):
         return {"enabled": False, "mood": "unknown", "summary": "", "reasons": []}
-
     g = lambda k, fb: config.getfloat("gecko", k, fallback=fb)
     t_min_h, t_max_h = g("temp_min_happy",     75.0), g("temp_max_happy",     88.0)
     t_min_c, t_max_c = g("temp_min_critical",  65.0), g("temp_max_critical",  95.0)

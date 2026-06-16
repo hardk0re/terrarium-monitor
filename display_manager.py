@@ -652,7 +652,9 @@ class DisplayManager:
         d.rectangle([(0, 0), (W, H)], fill=bg)
 
         # Title bar
-        d.text((10, 10), "GECKO MOOD", font=self._fnt_small, fill=WHITE)
+        gecko_name = self.config.get("web", "pet_name", fallback="GECKO")
+        #d.text((10, 10), "GECKO MOOD", font=self._fnt_small, fill=WHITE)
+        d.text((10, 10),f"{gecko_name}'S MOOD", font=self._fnt_small,  fill=WHITE )
         label = mood["mood"].upper()
         try:
             bbox = d.textbbox((0, 0), label, font=self._fnt_small)
