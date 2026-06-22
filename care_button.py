@@ -29,10 +29,11 @@ logger = logging.getLogger(__name__)
 
 class CareButton:
     def __init__(self, config, data_logger, section: str = "care_button",
-                 display=None):
+                 display=None, mister=None):
         self.config      = config
         self.data_logger = data_logger
         self.display     = display
+        self.mister      = mister
         self.section     = section
         self.pin         = None
         self.pull_up     = True
@@ -119,6 +120,27 @@ class CareButton:
                         self.section, self.message, self.category)
         except Exception as e:
             logger.exception("%s logging failed: %s", self.section, e)
+
+        # If this is a care-category button whose message matches the
+        # configured mister_trigger_items list, also fire the mister —
+        # same behavior as clicking that item in the dashboard care log.
+        if self.mister and self.category == "care":
+            try:
+                raw = self.config.get("care", "mister_trigger_items", fallback="")
+                triggers = [t.strip().lower() for t in raw.split(",") if t.strip()]
+                if self.message.lower() in triggers:
+                    if not getattr(self.mister, "button_enabled", True):
+                        logger.info("%s: mister button disabled in config — skipping.",
+                                    self.section)
+                    elif self.mister.trigger(reason=f"care button: {self.message}"):
+                        logger.info("%s: fired mister.", self.section)
+                    else:
+                        logger.info("%s: mister trigger blocked "
+                                    "(cooldown / 24h cap / already on).",
+                                    self.section)
+            except Exception as e:
+                logger.warning("%s: mister trigger check failed: %s", self.section, e)
+
         # Flash a confirmation on the OLED. Separate try so a display failure
         # doesn't mask a successful log entry.
         if self.display:

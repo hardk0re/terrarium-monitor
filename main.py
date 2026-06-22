@@ -15,6 +15,7 @@ from pathlib import Path
 from sensor_manager   import SensorManager
 from data_logger      import DataLogger
 from relay_controller import build_mister, build_fan, cleanup_gpio
+from homeassistant    import HomeAssistantClient
 from tapo_controller  import LightingController
 from display_manager  import DisplayManager
 from camera_manager   import CameraManager
@@ -49,14 +50,18 @@ def load_config() -> configparser.ConfigParser:
 
 def build_subsystems(cfg: configparser.ConfigParser) -> dict:
     """Instantiate all controllable subsystems from config."""
+    ha = HomeAssistantClient(
+        cfg.get("general", "ha_base_url", fallback=""),
+        cfg.get("general", "ha_token",    fallback=""),
+    )
     dl       = DataLogger(cfg)
     sensors  = SensorManager(cfg)
-    mister   = build_mister(cfg, dl)
+    mister   = build_mister(cfg, dl, ha_client=ha)
     fan      = build_fan(cfg, dl)
     lighting = LightingController(cfg, data_logger=dl)
     camera   = CameraManager(cfg)
     weather  = WeatherManager(cfg, data_logger=dl)
-    return dict(dl=dl, sensors=sensors, mister=mister,
+    return dict(dl=dl, ha=ha, sensors=sensors, mister=mister,
                 fan=fan, lighting=lighting, camera=camera, weather=weather)
 
 
@@ -134,7 +139,7 @@ def main():
     for sec in ("care_button_1", "care_button_2", "care_button_3"):
         if not cfg.has_section(sec):
             continue
-        b = CareButton(cfg, dl, sec, display=display)
+        b = CareButton(cfg, dl, sec, display=display, mister=mister)
         if b.pin is not None and b.pin not in seen_pins:
             care_buttons.append(b)
             seen_pins.add(b.pin)
@@ -285,8 +290,10 @@ def main():
             except Exception as e:
                 logger.warning("Mood check failed: %s", e)
 
-            # Mister — pick its sensor (blank = average of all enabled sensors)
-            if mister:
+            # Mister — auto-trigger only when [mister].enabled = true (the
+            # mister object still exists when button_enabled = true alone, but
+            # we don't fire it from the polling loop in that case).
+            if mister and getattr(mister, "auto_enabled", True):
                 m_sensor = cfg.get("mister", "sensor", fallback="").strip()
                 m_hum    = sensors.humidity_for(readings, m_sensor)
                 if m_hum is not None:

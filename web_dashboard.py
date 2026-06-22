@@ -1200,8 +1200,17 @@ def api_relay(name, cmd):
     relay = next((r for r in [_mister, _fan] if r and r.name.lower()==name.lower()), None)
     if not relay:
         return jsonify({"error": "unknown relay"}), 404
-    if cmd == "on":  relay.trigger(reason="manual override via web UI")
-    elif cmd == "off": relay.force_off()
+    if cmd == "on":
+        # Honour button_enabled if the relay defines it (mister does;
+        # GPIO fan doesn't, so getattr default True keeps fan unchanged).
+        if not getattr(relay, "button_enabled", True):
+            return jsonify({
+                "error": f"{relay.name} manual trigger disabled in config "
+                         f"(set button_enabled = true)"
+            }), 403
+        relay.trigger(reason="manual override via web UI")
+    elif cmd == "off":
+        relay.force_off()
     return jsonify({"ok": True})
 
 
@@ -1341,7 +1350,28 @@ def api_care_log():
     msg = item + (f" — {note}" if note else "")
     if _data_logger:
         _data_logger.log_system_event("care", msg)
-    return jsonify({"ok": True, "message": msg})
+
+    # If the care item is one of the configured mister triggers, also fire
+    # the mister. Subject to all the usual safety limits (button_enabled,
+    # cooldown, 24h cap). Empty/missing config = no auto-trigger from care.
+    display_msg = msg
+    triggered = False
+    trigger_items = []
+    if _config:
+        trigger_items = [t.strip().lower() for t in
+                         _config.get("care", "mister_trigger_items",
+                                     fallback="").split(",")
+                         if t.strip()]
+    if _mister and item.lower() in trigger_items:
+        if not getattr(_mister, "button_enabled", True):
+            display_msg += " — (mister button disabled in config)"
+        elif _mister.trigger(reason=f"care log: {item}"):
+            triggered = True
+            display_msg += " — mister started"
+        else:
+            display_msg += " — mister NOT started (cooldown / 24h cap / already on)"
+
+    return jsonify({"ok": True, "message": display_msg, "mister_triggered": triggered})
 
 
 @app.route("/api/feeding/items")
