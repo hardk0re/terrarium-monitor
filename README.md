@@ -80,6 +80,7 @@ Both sensors:
 ```
 
 ### Relay – Mister (HOME ASSISTANT)
+Intial plans for the mister was to use a 5V relay, however with so many WIFI enabled misters on ALIExpress, Home Assistant integration was simpler.  I could not get TUYA integration to work reliably.  If your running this your likely using HOMEASSISTANT, if not you should consider it. 
 
 ### Relay – Fan (GPIO 27)
 ```
