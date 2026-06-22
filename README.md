@@ -79,12 +79,7 @@ Both sensors:
   SCL → Pin 5  (GPIO3)
 ```
 
-### Relay – Mister (GPIO 17)
-```
-IN  → Pin 11 (GPIO17)
-VCC → Pin 2  (5V)
-GND → Pin 9  (GND)
-```
+### Relay – Mister (HOME ASSISTANT)
 
 ### Relay – Fan (GPIO 27)
 ```
